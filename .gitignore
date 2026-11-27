@@ -20,3 +20,9 @@ videos/*/assets/
 
 # HyperFrames local state (snapshots, check reports, project history)
 .hyperframes/
+
+# generated media inside templates (e.g. trying a template in place)
+templates/*/assets/
+
+# Python
+__pycache__/

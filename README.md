@@ -12,6 +12,8 @@
 - ffmpeg / ffprobe
 - Chrome / Chromium（HyperFrames、Remotion 渲染用；HyperFrames 也可以 `scripts/hf.sh browser ensure` 下载固定版本）
 - perl、awk（`selfcheck.sh` 用，macOS 自带）
+- Python 3（`scripts/ai/film.py` 用，只用标准库）
+- AI 生成路线出关键帧和视频要 `h3`（[colab-use](https://github.com/lalaze/colab-use)：MiniMax-H3-Image 出图、MiniMax-H3 出视频，跑在 Colab 上，按开机时长计费）
 
 ## 第三方 skill
 
@@ -31,6 +33,8 @@
 | 路径 | 用途 |
 |---|---|
 | [`templates/hyperframes-base/`](templates/hyperframes-base/) | HyperFrames 新片起点：片头 → 「左文右图」段落（一个文件挂多次，右栏放图或叠动画图形）→ 片尾；字体 / 配色变量、brief 和分镜骨架都备好了，001-demo 的坑写在它的 README 里 |
+| [`templates/ai-film-base/`](templates/ai-film-base/) | AI 生成路线的片子起点：镜头清单 `prompts/shots.json`（唯一事实来源）、示例小片、brief 骨架；流程和审片标准在自有 skill [`ai-director`](.claude/skills/ai-director/SKILL.md) |
+| [`scripts/ai/film.py`](scripts/ai/film.py) | AI 片导演工具：`plan` 校验并生成分镜 → `keyframes` 用 h3 出参考图和关键帧（默认 dry run 报 CU 预算，`--yes` 才开机，跑完必关机）→ `pick` → `clips` 图生视频（免费的 placeholder 运镜做动态分镜；`h3-video` 用 MiniMax-H3 首帧生视频、带环境音，turbo 试稿 / 20 步定稿，同样默认 dry run）→ `review` 审片图 → `assemble` 拼接 + SRT → `check` |
 | [`scripts/hf.sh`](scripts/hf.sh) | 跑 HyperFrames CLI：`cd <工程>/src && ../../../scripts/hf.sh check`。版本在脚本里固定（`HF_CLI_VERSION` 可临时覆盖），不发 `events` / `feedback` |
 | [`scripts/selfcheck.sh`](scripts/selfcheck.sh) | 渲染后自检：ffprobe 核对时长 / 分辨率 / 帧率，整片扫黑帧、空底色帧、静止段，抽帧并拼总览图，报告写进 `renders/frames/selfcheck.txt`。`--help` 看全部选项 |
 
