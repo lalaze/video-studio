@@ -22,7 +22,7 @@ description: 导演一条 AI 生成的片子（剧本 → 分镜 → 参考图 /
 F=scripts/ai/film.py; V=videos/00N-name
 rsync -a templates/ai-film-base/ $V/                 # 0. 新片
 # 1. 写 brief.md；写 prompts/shots.json（见下文「写镜头清单」）
-python3 $F plan $V --write                           # 2. 校验 + 生成 storyboard.md → 给用户确认
+python3 $F plan $V --write -m "初稿"                  # 2. 校验 + 存 v1 + 生成 storyboard.md → 给用户确认
 python3 $F keyframes $V                              # 3. dry run：关键帧试稿计划和预算 → 用户确认
 python3 $F keyframes $V --yes --keep-vm              #    试稿（4 MP，每镜 2 张；参考图先出）
 python3 $F review $V --what keyframes                # 4. 审图（逐张看 assets/review/*.png）
@@ -88,6 +88,22 @@ non_diegetic_music: N/A
 - **不写对白和音乐**：第一版不配音，台词只做字幕；配乐每镜一段会在剪切点断开，所以固定 N/A，以后整片统一加。
 - `motion.camera` 只给 placeholder 用（`static`、`push-in`、`pull-out`、`pan-left`、`pan-right`、`tilt-up`、`tilt-down`），尽量和 motion.prompt 里的运镜一致，动态分镜才像成片。
 - 官方指南：<https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md>
+
+## 改分镜（版本）
+
+- 用户点名要改某个镜头和栏目（画面、动作、声音、台词、时长、转场、运镜）时，只改 `prompts/shots.json` 里对应的字段，其他镜头和字段不动。
+- 改完**马上**运行 `python3 $F plan $V --write -m "一句说明"` 存新版并重写 `storyboard.md`，再运行 `python3 $F diff $V vN-1 vN` 把改动给用户看。如果 `plan --write` 打印了 ⚠ 过期选片提醒，告诉用户哪些已选的图 / 视频已经对不上新分镜。提醒是拿上一版比的：改了分镜不存版就去出图、选图，之后再存版，新选的图也会被误报。
+- 查看版本历史用 `python3 $F versions $V`；查看工作区未保存的改动用 `python3 $F diff $V`。
+- 需要回退时用 `revert`（版本只增不改，回退本身也会存成新版；工作区有未保存改动时会先自动存一版「回退前自动保存」，所以退错还能再退回来）：
+  - 整版回退：`python3 $F revert $V v2`（可选 `-m "说明"`）
+  - 单镜回退：`python3 $F revert $V v2 --shots s02`（可逗号分隔多镜；当前已删掉、目标版里有的镜头会按目标版顺序插回原位）
+- **回退时选片怎么清**（只删 `shots.json` 里的 `image`/`clip` 和 `seed`，文件留在 `assets/`，想用回原来的可以 `film.py pick`）：
+  - `style` 或 `format` 变了 → 所有参考图图片、所有关键帧和视频都清。
+  - 参考图提示词变了或被删 → 该参考图图片清掉；`keyframe.refs` 引用它的镜头，关键帧和视频也清。
+  - 某镜 `keyframe.prompt` 或 `keyframe.refs` 变了 → 该镜关键帧和视频都清。
+  - 某镜 `motion.prompt` / `motion.sound` / `motion.camera`、`duration`、有效后端或全局 `video_style` 变了 → 只清该镜视频，关键帧保留。
+  - 只改 `line`、`notes`、`transition` → 选片全保留。
+- 不要手改 `prompts/versions/` 里的版本文件（由 `film.py` 自动维护，只增不改，进 git）。
 
 ## 审片标准
 

@@ -3,7 +3,11 @@
 
 所有步骤都由片子目录里的 prompts/shots.json（镜头清单）驱动，结果写回这份清单：
 
-  film.py plan      DIR [--write]           校验清单、列出每镜进度；--write 重写 storyboard.md
+  film.py plan      DIR [--write [-m 说明]] 校验清单、列出每镜进度；--write 存版本并重写 storyboard.md
+  film.py versions  DIR                     列出分镜版本历史和每次改动摘要
+  film.py diff      DIR [A] [B]             按镜头对比两版分镜（默认最新版 → 当前）
+  film.py revert    DIR VER [--shots ...] [-m 说明]
+                                            整版或单镜回退到指定版本，自动清理失效的选片
   film.py keyframes DIR [--stage trial|final] [--shots s01,s02] [--yes] ...
                                             用 h3 出参考图和关键帧。默认只打印计划和 CU 预算，
                                             --yes 才开机；跑完一定 h3 down（--keep-vm 除外）
@@ -22,6 +26,8 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import difflib
 import json
 import math
 import os
@@ -37,6 +43,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SELFCHECK = REPO / "scripts" / "selfcheck.sh"
 SHOTS = Path("prompts") / "shots.json"
+VERSIONS = Path("prompts") / "versions"
 
 FADE = 0.5  # crossfade length for transition "fade", seconds
 ASPECTS = {"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"}
@@ -81,11 +88,15 @@ def load(vdir: Path) -> dict:
         raise FilmError(f"{path} 不是合法 JSON：{e}") from e
 
 
-def save(vdir: Path, data: dict) -> None:
-    path = vdir / SHOTS
+def _write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+def save(vdir: Path, data: dict) -> None:
+    _write_json(vdir / SHOTS, data)
 
 
 def rel(vdir: Path, p: Path | str) -> str:
@@ -388,6 +399,8 @@ def cell(data: dict, width: int = 480) -> tuple[int, int]:
 
 
 def cmd_plan(a) -> int:
+    if a.message is not None and not a.write:
+        raise FilmError("-m 要和 --write 一起用")
     vdir = Path(a.dir)
     data = load(vdir)
     print(f"{data.get('title', vdir.name)} · {vdir / SHOTS}")
@@ -431,13 +444,41 @@ def cmd_plan(a) -> int:
               "（h3-video，先 dry-run 看预算）；或者直接 assemble 出动态分镜")
     else:
         print(f"下一步：film.py assemble {vdir}")
+    sb = storyboard(data)
+    vers = load_versions(vdir)
+    latest = vers[-1] if vers else None
     if a.write:
-        write_storyboard(vdir, data)
+        if is_template(vdir):
+            print("模板目录不存版本")
+            write_storyboard(vdir, data)
+        else:
+            if latest is None or sb != latest["storyboard"]:
+                note = (a.message or "").strip() or ("初稿" if latest is None else "（未写说明）")
+                ver = save_version(vdir, sb, note)
+                if latest is None:
+                    print(f"已存为 v{ver['version']}（{ver['note']}）：共 {len(data['shots'])} 镜")
+                else:
+                    d = diff_storyboards(latest["storyboard"], sb)
+                    print(f"已存为 v{ver['version']}（{ver['note']}）：{diff_summary(d)}")
+                    warn_stale_picks(stale_picks(latest["storyboard"], data))
+            else:
+                ver = latest
+                print(f"分镜和 v{latest['version']} 一样，没存新版本")
+            write_storyboard(vdir, data, ver=ver)
         print(f"已重写 {vdir / 'storyboard.md'}")
+    else:
+        if is_template(vdir) and latest is None:
+            print("版本：模板目录不存版本")
+        elif latest is None:
+            print("版本：还没有（plan --write 存第一版）")
+        elif sb == latest["storyboard"]:
+            print(f"版本：v{latest['version']}")
+        else:
+            print(f"版本：v{latest['version']}（有未保存的改动 → plan --write -m 说明）")
     return 0
 
 
-def write_storyboard(vdir: Path, data: dict) -> None:
+def write_storyboard(vdir: Path, data: dict, ver: dict | None = None) -> None:
     w, h, fps, aspect = fmt(data)
     starts, total = timeline(data)
     lines = [
@@ -445,6 +486,10 @@ def write_storyboard(vdir: Path, data: dict) -> None:
         "",
         "<!-- 由 scripts/ai/film.py plan --write 从 prompts/shots.json 生成；改分镜请改 shots.json 再重新生成。 -->",
         "",
+    ]
+    if ver is not None:
+        lines += [f"版本 v{ver['version']} · {short_time(ver.get('time', ''))} · {ver.get('note', '')}", ""]
+    lines += [
         f"{total:.1f} s · {w}×{h} · {fps} fps · {aspect} · {len(data['shots'])} 镜。正式片：分镜确认后再出关键帧。",
         "",
         f"关键帧风格：{data.get('style', '')}",
@@ -467,6 +512,641 @@ def write_storyboard(vdir: Path, data: dict) -> None:
                      f"{md(s.get('line', ''))} | {s.get('transition', 'cut')} |")
     lines.append("")
     (vdir / "storyboard.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+# ---------------------------------------------------------------- versions
+
+
+_MISSING = object()
+
+SHOT_LABELS = {
+    "keyframe.prompt": "画面",
+    "keyframe.refs": "参考图",
+    "motion.camera": "运镜",
+    "motion.prompt": "动作",
+    "motion.sound": "声音",
+    "motion.backend": "后端",
+    "line": "台词",
+    "duration": "时长",
+    "transition": "转场",
+    "notes": "备注",
+}
+_SHOT_RANK = {k: i for i, k in enumerate(SHOT_LABELS)}
+
+GLOBAL_LABELS = {
+    "title": "标题",
+    "output": "输出",
+    "backend": "后端",
+    "style": "关键帧风格",
+    "video_style": "视频风格",
+}
+_GLOBAL_RANK = {k: i for i, k in enumerate(GLOBAL_LABELS)}
+
+_WORD_RE = re.compile(r"\s+|[A-Za-z0-9_'-]+|[\u3400-\u9fff]|.", re.DOTALL)
+
+
+def storyboard(data: dict) -> dict:
+    """Deep copy of shots.json with production-pick fields removed, for versioning and diffing."""
+    sb = copy.deepcopy(data)
+    for r in (sb.get("references") or {}).values():
+        if isinstance(r, dict):
+            r.pop("image", None)
+            r.pop("seed", None)
+    for s in sb.get("shots") or []:
+        if isinstance(s, dict):
+            for key, picks in (("keyframe", ("image", "seed")), ("motion", ("clip", "seed"))):
+                part = s.get(key)
+                if isinstance(part, dict):
+                    for k in picks:
+                        part.pop(k, None)
+                # `pick` / placeholder auto-pick create "motion": {"clip": …} on shots that had no motion;
+                # once the picks are gone an empty or null section is the same as no section.
+                if key in s and not s[key]:
+                    del s[key]
+    return sb
+
+
+def is_template(vdir: Path) -> bool:
+    """True when vdir sits inside `<REPO>/templates/` (templates must not accumulate version history)."""
+    return vdir.resolve().is_relative_to((REPO / "templates").resolve())
+
+
+def version_files(vdir: Path) -> list[tuple[int, Path]]:
+    d = vdir / VERSIONS
+    if not d.is_dir():
+        return []
+    found: list[tuple[int, Path]] = []
+    for p in d.iterdir():
+        m = re.fullmatch(r"v(\d+)\.json", p.name)
+        if m and p.is_file():
+            found.append((int(m.group(1)), p))
+    return sorted(found, key=lambda x: x[0])
+
+
+def load_versions(vdir: Path) -> list[dict]:
+    out: list[dict] = []
+    for _, p in version_files(vdir):
+        try:
+            out.append(json.loads(p.read_text(encoding="utf-8")))
+        except json.JSONDecodeError as e:
+            raise FilmError(f"{p} 不是合法 JSON：{e}") from e
+    return out
+
+
+def parse_version_num(spec: str) -> int:
+    m = re.fullmatch(r"v?(\d+)", spec.strip(), re.IGNORECASE)
+    if not m or int(m.group(1)) <= 0:
+        raise FilmError(f"不认识的版本号：{spec!r}（用 v1、1 这类写法）")
+    return int(m.group(1))
+
+
+def load_version(vdir: Path, num: int) -> dict:
+    files = version_files(vdir)
+    for n, p in files:
+        if n == num:
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as e:
+                raise FilmError(f"{p} 不是合法 JSON：{e}") from e
+    if not files:
+        raise FilmError(f"没有版本 v{num}（还没有存过版本）")
+    raise FilmError(f"没有版本 v{num}（现有 v{files[0][0]}–v{files[-1][0]}）")
+
+
+def save_version(vdir: Path, sb: dict, note: str) -> dict:
+    files = version_files(vdir)
+    n = (files[-1][0] + 1) if files else 1
+    rec = {
+        "version": n,
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "note": note,
+        "storyboard": sb,
+    }
+    _write_json(vdir / VERSIONS / f"v{n:03d}.json", rec)
+    return rec
+
+
+def short_time(ts: str) -> str:
+    return ts.replace("T", " ")[:16]
+
+
+def global_label(path: str) -> str:
+    if path in GLOBAL_LABELS:
+        return GLOBAL_LABELS[path]
+    if path.startswith("format."):
+        return f"画幅 {path[7:]}"
+    return path
+
+
+def shot_label(path: str) -> str:
+    return SHOT_LABELS.get(path, path)
+
+
+def _flatten_nonempty(d: dict, prefix: str) -> list[tuple[str, object]]:
+    items: list[tuple[str, object]] = []
+    for k, v in d.items():
+        path = f"{prefix}.{k}" if prefix else k
+        if isinstance(v, dict) and v:
+            items.extend(_flatten_nonempty(v, path))
+        else:
+            items.append((path, v))
+    return items
+
+
+def _same_val(a: object, b: object) -> bool:
+    if a is _MISSING or b is _MISSING:
+        return a is b
+    if isinstance(a, bool) != isinstance(b, bool):
+        return False
+    return a == b
+
+
+def _diff_dicts(da: dict, db: dict, prefix: str = "",
+                *, skip: set[str] | None = None) -> list[tuple[str, object, object]]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for k in (*db.keys(), *da.keys()):
+        if k not in seen and (not skip or k not in skip):
+            seen.add(k)
+            keys.append(k)
+    changes: list[tuple[str, object, object]] = []
+    for k in keys:
+        path = f"{prefix}.{k}" if prefix else k
+        va, vb = da.get(k, _MISSING), db.get(k, _MISSING)
+        if _same_val(va, vb):
+            continue
+        if isinstance(va, dict) and isinstance(vb, dict):
+            changes.extend(_diff_dicts(va, vb, path))
+        elif isinstance(va, dict) and vb is _MISSING and va:
+            for sub_p, sub_v in _flatten_nonempty(va, path):
+                changes.append((sub_p, sub_v, _MISSING))
+        elif va is _MISSING and isinstance(vb, dict) and vb:
+            for sub_p, sub_v in _flatten_nonempty(vb, path):
+                changes.append((sub_p, _MISSING, sub_v))
+        else:
+            changes.append((path, va, vb))
+    return changes
+
+
+def diff_storyboards(sb_a: dict, sb_b: dict) -> dict:
+    """Structured diff between two storyboards: global + references, per-shot changes, add/del, order."""
+    g_raw = _diff_dicts(sb_a, sb_b, skip={"shots", "references"})
+    g_raw.sort(key=lambda item: _GLOBAL_RANK.get(item[0], len(_GLOBAL_RANK)))
+    global_items: list[tuple[str, str, object, object]] = [
+        ("field", global_label(p), va, vb) for p, va, vb in g_raw
+    ]
+
+    refs_a, refs_b = sb_a.get("references") or {}, sb_b.get("references") or {}
+    if isinstance(refs_a, dict) and isinstance(refs_b, dict):
+        for name in refs_b:
+            if name not in refs_a:
+                prompt = (refs_b[name] or {}).get("prompt", "") if isinstance(refs_b[name], dict) else ""
+                global_items.append(("ref_add", f"+ 参考图 {name}", _MISSING, prompt))
+            else:
+                ra, rb = refs_a[name], refs_b[name]
+                if isinstance(ra, dict) and isinstance(rb, dict):
+                    for sub_p, va, vb in _diff_dicts(ra, rb):
+                        lbl = f"参考图 {name}" if sub_p == "prompt" else f"references.{name}.{sub_p}"
+                        global_items.append(("field", lbl, va, vb))
+                elif not _same_val(ra, rb):
+                    global_items.append(("field", f"references.{name}", ra, rb))
+        for name in refs_a:
+            if name not in refs_b:
+                global_items.append(("ref_del", f"- 参考图 {name}", _MISSING, _MISSING))
+    elif not _same_val(sb_a.get("references", _MISSING), sb_b.get("references", _MISSING)):
+        global_items.append(("field", "references", sb_a.get("references", _MISSING), sb_b.get("references", _MISSING)))
+
+    list_a, list_b = sb_a.get("shots") or [], sb_b.get("shots") or []
+    map_a = {s["id"]: s for s in list_a}
+    map_b = {s["id"]: s for s in list_b}
+    ids_a = [s["id"] for s in list_a]
+    ids_b = [s["id"] for s in list_b]
+
+    modified: list[tuple[str, list[tuple[str, object, object]]]] = []
+    added: list[tuple[str, dict]] = []
+    for s in list_b:
+        sid = s["id"]
+        if sid not in map_a:
+            added.append((sid, s))
+        else:
+            ch = _diff_dicts(map_a[sid], s, skip={"id"})
+            if ch:
+                ch.sort(key=lambda item: _SHOT_RANK.get(item[0], len(_SHOT_RANK)))
+                modified.append((sid, ch))
+    deleted = [sid for sid in ids_a if sid not in map_b]
+
+    common_a = [sid for sid in ids_a if sid in map_b]
+    common_b = [sid for sid in ids_b if sid in map_a]
+    reordered = (ids_a, ids_b) if common_a != common_b else None
+
+    return {
+        "global": global_items,
+        "modified": modified,
+        "added": added,
+        "deleted": deleted,
+        "reordered": reordered,
+    }
+
+
+def _trim_tokens(tokens: list[str], *, at_start: bool, at_end: bool, keep: int = 30) -> str:
+    text = "".join(tokens)
+    if at_start and at_end:
+        return text
+    if at_start and len(text) > keep + 10:
+        acc: list[str] = []
+        n = 0
+        for t in reversed(tokens):
+            if n >= keep and not t.isspace():
+                break
+            acc.append(t)
+            n += len(t)
+        return "…" + "".join(reversed(acc)).lstrip()
+    if at_end and len(text) > keep + 10:
+        acc = []
+        n = 0
+        for t in tokens:
+            if n >= keep and not t.isspace():
+                break
+            acc.append(t)
+            n += len(t)
+        return "".join(acc).rstrip() + "…"
+    if not at_start and not at_end and len(text) > keep * 2 + 10:
+        left = _trim_tokens(tokens, at_start=False, at_end=True, keep=keep)
+        right = _trim_tokens(tokens, at_start=True, at_end=False, keep=keep)
+        return f"{left[:-1]} … {right[1:]}"
+    return text
+
+
+def _coalesce_ops(ta: list[str], ops: list[tuple[str, int, int, int, int]]) -> list[tuple[str, int, int, int, int]]:
+    merged: list[tuple[str, int, int, int, int]] = []
+    i = 0
+    while i < len(ops):
+        tag, i1, i2, j1, j2 = ops[i]
+        if (tag == "equal" and merged and i + 1 < len(ops)
+                and merged[-1][0] != "equal" and ops[i + 1][0] != "equal"
+                and "".join(ta[i1:i2]).isspace()):
+            ptag, pi1, _, pj1, _ = merged[-1]
+            ntag, _, ni2, _, nj2 = ops[i + 1]
+            merged[-1] = (ptag if ptag == ntag else "replace", pi1, ni2, pj1, nj2)
+            i += 2
+            continue
+        merged.append((tag, i1, i2, j1, j2))
+        i += 1
+    return merged
+
+
+def word_diff(old: str, new: str) -> str:
+    ta, tb = _WORD_RE.findall(old), _WORD_RE.findall(new)
+    ops = _coalesce_ops(ta, difflib.SequenceMatcher(None, ta, tb, autojunk=False).get_opcodes())
+    out: list[str] = []
+    for idx, (tag, i1, i2, j1, j2) in enumerate(ops):
+        if tag == "equal":
+            out.append(_trim_tokens(ta[i1:i2], at_start=(idx == 0), at_end=(idx == len(ops) - 1)))
+        else:
+            a_s, b_s = "".join(ta[i1:i2]), "".join(tb[j1:j2])
+            if tag == "replace":
+                out.append(f"[-{a_s}-]{{+{b_s}+}}")
+            elif tag == "delete":
+                out.append(f"[-{a_s}-]")
+            elif tag == "insert":
+                out.append(f"{{+{b_s}+}}")
+    return "".join(out)
+
+
+def format_val(v: object) -> str:
+    if v is _MISSING:
+        return "（无）"
+    return json.dumps(v, ensure_ascii=False)
+
+
+def format_change(old: object, new: object) -> str:
+    if isinstance(old, str) and isinstance(new, str):
+        return word_diff(old, new)
+    return f"{format_val(old)} → {format_val(new)}"
+
+
+def diff_has_changes(d: dict) -> bool:
+    return bool(d["global"] or d["modified"] or d["added"] or d["deleted"] or d["reordered"])
+
+
+def diff_summary(d: dict) -> str:
+    parts: list[str] = []
+    for sid, ch in d["modified"]:
+        labels = list(dict.fromkeys(shot_label(p) for p, _, _ in ch))
+        parts.append(f"{sid} {'、'.join(labels)}")
+    if d["added"]:
+        parts.append(f"新增 {'、'.join(sid for sid, _ in d['added'])}")
+    if d["deleted"]:
+        parts.append(f"删除 {'、'.join(d['deleted'])}")
+    if d["reordered"]:
+        parts.append("顺序变了")
+    if d["global"]:
+        g_labels = list(dict.fromkeys(lbl for _, lbl, _, _ in d["global"]))
+        parts.append(f"全局 {'、'.join(g_labels)}")
+    return "；".join(parts) if parts else "无改动"
+
+
+def format_diff(label_a: str, label_b: str, d: dict) -> str:
+    if not diff_has_changes(d):
+        return "没有差别"
+    lines = [f"{label_a} → {label_b}"]
+    if d["global"]:
+        lines.append("全局")
+        for kind, lbl, va, vb in d["global"]:
+            if kind == "field":
+                lines.append(f"  {lbl}：{format_change(va, vb)}")
+            elif kind == "ref_add":
+                snippet = str(vb).strip()
+                if len(snippet) > 60:
+                    snippet = snippet[:60] + "…"
+                lines.append(f"  {lbl}：{snippet}" if snippet else f"  {lbl}")
+            elif kind == "ref_del":
+                lines.append(f"  {lbl}")
+    for sid, ch in d["modified"]:
+        lines.append(sid)
+        for p, va, vb in ch:
+            lines.append(f"  {shot_label(p)}：{format_change(va, vb)}")
+    for sid, s in d["added"]:
+        prompt = ((s.get("keyframe") or {}).get("prompt") or "").strip()
+        snippet = (prompt[:60] + "…") if len(prompt) > 60 else prompt
+        lines.append(f"+ {sid}（新增）：{snippet}" if snippet else f"+ {sid}（新增）")
+    for sid in d["deleted"]:
+        lines.append(f"- {sid}（删除）")
+    if d["reordered"]:
+        ids_a, ids_b = d["reordered"]
+        lines.append(f"顺序：{' '.join(ids_a)} → {' '.join(ids_b)}")
+    return "\n".join(lines)
+
+
+def stale_picks(old_sb: dict, new_data: dict) -> list[dict]:
+    """Find picks currently on new_data that no longer match new_data's storyboard relative to old_sb."""
+    new_sb = storyboard(new_data)
+    style_changed = (old_sb.get("style") or "") != (new_sb.get("style") or "")
+    format_changed = old_sb.get("format") != new_sb.get("format")
+    video_style_changed = (old_sb.get("video_style") or "") != (new_sb.get("video_style") or "")
+
+    old_refs = old_sb.get("references") or {}
+    new_refs = new_data.get("references") or {}
+    changed_refs: set[str] = set()
+    for name, old_r in old_refs.items():
+        if name not in new_refs:
+            changed_refs.add(name)
+        elif ((old_r or {}).get("prompt") or "") != ((new_refs[name] or {}).get("prompt") or ""):
+            changed_refs.add(name)
+
+    stale: list[dict] = []
+
+    for name, ref in new_refs.items():
+        if name not in old_refs or not isinstance(ref, dict):
+            continue
+        reasons: list[str] = []
+        if style_changed:
+            reasons.append("关键帧风格变了")
+        if format_changed:
+            reasons.append("画幅变了")
+        if name in changed_refs:
+            reasons.append("参考图提示词变了")
+        if reasons and (ref.get("image") or ref.get("seed") is not None):
+            stale.append({"kind": "ref", "target": name, "path": ref.get("image"), "reasons": reasons})
+
+    old_shots = {s["id"]: s for s in old_sb.get("shots") or []}
+    for s in new_data.get("shots") or []:
+        sid = s["id"]
+        old_s = old_shots.get(sid)
+        if old_s is None:
+            continue
+        old_kf, new_kf = old_s.get("keyframe") or {}, s.get("keyframe") or {}
+        old_mo, new_mo = old_s.get("motion") or {}, s.get("motion") or {}
+
+        kf_reasons: list[str] = []
+        if style_changed:
+            kf_reasons.append("关键帧风格变了")
+        if format_changed:
+            kf_reasons.append("画幅变了")
+        if (old_kf.get("prompt") or "") != (new_kf.get("prompt") or ""):
+            kf_reasons.append("画面变了")
+        if (old_kf.get("refs") or []) != (new_kf.get("refs") or []):
+            kf_reasons.append("参考图变了")
+        bad_refs = [r for r in (new_kf.get("refs") or []) if r in changed_refs]
+        if bad_refs:
+            kf_reasons.append(f"参考图 {'、'.join(bad_refs)} 变了")
+
+        if kf_reasons and (new_kf.get("image") or new_kf.get("seed") is not None):
+            stale.append({"kind": "keyframe", "target": sid, "path": new_kf.get("image"), "reasons": kf_reasons})
+
+        video_reasons: list[str] = list(kf_reasons)
+        if video_style_changed:
+            video_reasons.append("视频风格变了")
+        if shot_backend(old_sb, old_s) != shot_backend(new_sb, s):
+            video_reasons.append("后端变了")
+        if old_s.get("duration") != s.get("duration"):
+            video_reasons.append("时长变了")
+        if old_mo.get("camera", "static") != new_mo.get("camera", "static"):
+            video_reasons.append("运镜变了")
+        if (old_mo.get("prompt") or "") != (new_mo.get("prompt") or ""):
+            video_reasons.append("动作变了")
+        if (old_mo.get("sound") or "") != (new_mo.get("sound") or ""):
+            video_reasons.append("声音变了")
+
+        if video_reasons and (new_mo.get("clip") or new_mo.get("seed") is not None):
+            stale.append({"kind": "clip", "target": sid, "path": new_mo.get("clip"),
+                          "reasons": list(dict.fromkeys(video_reasons))})
+
+    return stale
+
+
+def clear_stale_picks(data: dict, stale: list[dict]) -> None:
+    refs = data.get("references") or {}
+    shots = {s["id"]: s for s in data.get("shots") or []}
+    for e in stale:
+        if e["kind"] == "ref":
+            r = refs.get(e["target"])
+            if isinstance(r, dict):
+                r.pop("image", None)
+                r.pop("seed", None)
+        elif e["kind"] == "keyframe":
+            kf = (shots.get(e["target"]) or {}).get("keyframe")
+            if isinstance(kf, dict):
+                kf.pop("image", None)
+                kf.pop("seed", None)
+        elif e["kind"] == "clip":
+            mo = (shots.get(e["target"]) or {}).get("motion")
+            if isinstance(mo, dict):
+                mo.pop("clip", None)
+                mo.pop("seed", None)
+
+
+def warn_stale_picks(stale: list[dict]) -> None:
+    for e in stale:
+        if not e["path"]:
+            continue
+        reason = "、".join(e["reasons"])
+        if e["kind"] == "ref":
+            print(f"  ⚠ 参考图 {e['target']} {reason}，但还选着按旧分镜出的图片 {e['path']}：重出或重新 pick")
+        elif e["kind"] == "keyframe":
+            print(f"  ⚠ {e['target']} {reason}，但还选着按旧分镜出的关键帧 {e['path']}：重出或重新 pick")
+        elif e["kind"] == "clip":
+            print(f"  ⚠ {e['target']} {reason}，但还选着按旧分镜出的视频 {e['path']}：重出或重新 pick")
+
+
+def print_cleared_picks(stale: list[dict]) -> None:
+    shown = [e for e in stale if e["path"]]
+    if not shown:
+        return
+    for e in shown:
+        reason = "、".join(e["reasons"])
+        if e["kind"] == "ref":
+            print(f"  · 清掉参考图 {e['target']} {e['path']}（{reason}）")
+        elif e["kind"] == "keyframe":
+            print(f"  · 清掉 {e['target']} 关键帧 {e['path']}（{reason}）")
+        elif e["kind"] == "clip":
+            print(f"  · 清掉 {e['target']} 视频 {e['path']}（{reason}）")
+    print("文件还在 assets/，想用回原来的可以 film.py pick")
+
+
+def _copy_shot_picks(src: dict, dst: dict) -> None:
+    src_kf = src.get("keyframe") or {}
+    if src_kf.get("image") is not None or src_kf.get("seed") is not None:
+        dst_kf = dst.setdefault("keyframe", {})
+        if src_kf.get("image") is not None:
+            dst_kf["image"] = src_kf["image"]
+        if src_kf.get("seed") is not None:
+            dst_kf["seed"] = src_kf["seed"]
+    src_mo = src.get("motion") or {}
+    if src_mo.get("clip") is not None or src_mo.get("seed") is not None:
+        dst_mo = dst.setdefault("motion", {})
+        if src_mo.get("clip") is not None:
+            dst_mo["clip"] = src_mo["clip"]
+        if src_mo.get("seed") is not None:
+            dst_mo["seed"] = src_mo["seed"]
+
+
+def _resolve_diff_side(vdir: Path, data: dict, spec: str | None, *, default_latest: bool) -> tuple[str, dict]:
+    if spec is None:
+        if default_latest:
+            vers = load_versions(vdir)
+            if not vers:
+                raise FilmError("还没有存过版本（先运行 plan --write）")
+            return f"v{vers[-1]['version']}", vers[-1]["storyboard"]
+        return "当前", storyboard(data)
+    if spec.strip().lower() == "now":
+        return "当前", storyboard(data)
+    rec = load_version(vdir, parse_version_num(spec))
+    return f"v{rec['version']}", rec["storyboard"]
+
+
+def cmd_versions(a) -> int:
+    vdir = Path(a.dir)
+    data = load(vdir)
+    vers = load_versions(vdir)
+    if not vers:
+        print(f"还没有版本（先运行 film.py plan {a.dir} --write 存第一版）")
+        return 0
+    w = max(len(str(v["version"])) for v in vers)
+    prev: dict | None = None
+    for v in vers:
+        print(f"v{v['version']:<{w}}  {short_time(v.get('time', ''))}  {v.get('note', '')}")
+        if prev is not None:
+            d = diff_storyboards(prev["storyboard"], v["storyboard"])
+            print(f"  {diff_summary(d)}")
+        prev = v
+    if storyboard(data) != vers[-1]["storyboard"]:
+        print(f"\n当前有未保存的改动（film.py diff {a.dir} 查看）")
+    return 0
+
+
+def cmd_diff(a) -> int:
+    vdir = Path(a.dir)
+    data = load(vdir)
+    label_a, sb_a = _resolve_diff_side(vdir, data, a.a, default_latest=True)
+    label_b, sb_b = _resolve_diff_side(vdir, data, a.b, default_latest=False)
+    print(format_diff(label_a, label_b, diff_storyboards(sb_a, sb_b)))
+    return 0
+
+
+def cmd_revert(a) -> int:
+    vdir = Path(a.dir)
+    cur_data = load(vdir)
+    cur_sb = storyboard(cur_data)
+    ver_num = parse_version_num(a.ver)
+    target_rec = load_version(vdir, ver_num)
+    target_sb = target_rec["storyboard"]
+
+    want: list[str] | None = None
+    if a.shots is not None:
+        want = list(dict.fromkeys(x.strip() for x in a.shots.split(",") if x.strip()))
+        if not want:
+            raise FilmError("--shots 不能为空")
+        target_shots = {s["id"]: s for s in target_sb.get("shots") or []}
+        missing = [sid for sid in want if sid not in target_shots]
+        if missing:
+            raise FilmError(f"v{ver_num} 里没有 {', '.join(missing)}")
+
+        new_data = copy.deepcopy(cur_data)
+        new_shots = new_data.setdefault("shots", [])
+        cur_idx = {s["id"]: i for i, s in enumerate(new_shots)}
+        for sid in want:
+            if sid in cur_idx:
+                rep = copy.deepcopy(target_shots[sid])
+                _copy_shot_picks(new_shots[cur_idx[sid]], rep)
+                new_shots[cur_idx[sid]] = rep
+
+        target_order = [s["id"] for s in target_sb.get("shots") or []]
+        want_set = set(want)
+        for pos, sid in enumerate(target_order):
+            if sid in want_set and sid not in cur_idx:
+                rep = copy.deepcopy(target_shots[sid])
+                present = {s["id"]: i for i, s in enumerate(new_shots)}
+                insert_at = 0
+                for prev_sid in reversed(target_order[:pos]):
+                    if prev_sid in present:
+                        insert_at = present[prev_sid] + 1
+                        break
+                new_shots.insert(insert_at, rep)
+    else:
+        new_data = copy.deepcopy(target_sb)
+        for name, ref in (new_data.get("references") or {}).items():
+            cur_ref = (cur_data.get("references") or {}).get(name)
+            if isinstance(ref, dict) and isinstance(cur_ref, dict):
+                if cur_ref.get("image") is not None:
+                    ref["image"] = cur_ref["image"]
+                if cur_ref.get("seed") is not None:
+                    ref["seed"] = cur_ref["seed"]
+        cur_shots_by_id = {s["id"]: s for s in cur_data.get("shots") or []}
+        for s in new_data.get("shots") or []:
+            cur_s = cur_shots_by_id.get(s["id"])
+            if cur_s is not None:
+                _copy_shot_picks(cur_s, s)
+
+    new_sb = storyboard(new_data)
+    if new_sb == cur_sb:
+        print("已经是这个样子，没有改动")
+        return 0
+
+    stale = stale_picks(cur_sb, new_data)
+    clear_stale_picks(new_data, stale)
+    require_valid(vdir, new_data)
+
+    vers = load_versions(vdir)
+    if vers and cur_sb != vers[-1]["storyboard"]:
+        auto_ver = save_version(vdir, cur_sb, "回退前自动保存")
+        print(f"当前有未保存的改动，已先自动存为 v{auto_ver['version']}（回退前自动保存）")
+
+    save(vdir, new_data)
+    if (a.message or "").strip():
+        note = a.message.strip()
+    elif want is not None:
+        note = f"{'、'.join(want)} 回退到 v{ver_num}"
+    else:
+        note = f"回退到 v{ver_num}"
+    ver = save_version(vdir, new_sb, note)
+    write_storyboard(vdir, new_data, ver=ver)
+
+    d = diff_storyboards(cur_sb, new_sb)
+    print(f"已存为 v{ver['version']}（{ver['note']}）：{diff_summary(d)}")
+    print_cleared_picks(stale)
+    print(f"已重写 {vdir / 'storyboard.md'}")
+    return 0
 
 
 # ---------------------------------------------------------------- keyframes (h3)
@@ -1051,8 +1731,26 @@ def main(argv: list[str] | None = None) -> int:
 
     sp = sub.add_parser("plan", help="校验镜头清单、看进度")
     sp.add_argument("dir")
-    sp.add_argument("--write", action="store_true", help="按 shots.json 重写 storyboard.md")
+    sp.add_argument("--write", action="store_true", help="存分镜版本并按 shots.json 重写 storyboard.md")
+    sp.add_argument("-m", "--message", help="存版时的说明（和 --write 一起用）")
     sp.set_defaults(fn=cmd_plan)
+
+    sp = sub.add_parser("versions", help="列出分镜版本历史和改动摘要")
+    sp.add_argument("dir")
+    sp.set_defaults(fn=cmd_versions)
+
+    sp = sub.add_parser("diff", help="按镜头对比两版分镜（默认最新版 → 当前）")
+    sp.add_argument("dir")
+    sp.add_argument("a", nargs="?", help="旧版本（v1、1 或 now，默认最新版）")
+    sp.add_argument("b", nargs="?", help="新版本（v2、2 或 now，默认 now）")
+    sp.set_defaults(fn=cmd_diff)
+
+    sp = sub.add_parser("revert", help="整版或单镜回退到指定分镜版本")
+    sp.add_argument("dir")
+    sp.add_argument("ver", help="目标版本（如 v2 或 2）")
+    sp.add_argument("--shots", help="只回退这些镜头，逗号分隔")
+    sp.add_argument("-m", "--message", help="本次回退的版本说明")
+    sp.set_defaults(fn=cmd_revert)
 
     sp = sub.add_parser("keyframes", help="用 h3 出参考图和关键帧（默认 dry run）")
     sp.add_argument("dir")

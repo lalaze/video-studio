@@ -16,6 +16,7 @@ python3 scripts/ai/film.py keyframes videos/002-foo         # dry run：打印 h
 | 文件 | 作用 |
 |---|---|
 | `prompts/shots.json` | **镜头清单，唯一的事实来源**：画幅、统一风格、参考图（人物 / 道具设定）、每镜的时长、转场、关键帧提示词、运镜、台词，以及选中的图和视频。脚本读它，也写回它 |
+| `prompts/versions/` | 每一版分镜（`v001.json`、`v002.json`…），`plan --write` 自动存，只增不改，进 git |
 | `storyboard.md` | 由 `film.py plan --write` 从 `shots.json` 生成，给人看、给用户确认用；不要手改 |
 | `brief.md` | 需求、风格设定、角色设定、预算 |
 | `prompts/runs/*.jsonl` | 每次 h3 出图 / 出视频的记录（提示词、seed、尺寸），进 git |
