@@ -19,8 +19,8 @@ videos/<三位编号>-<短名>/     例：videos/001-demo/
   prompts/         生成参数：prompt、模型、种子、参考图
   assets/          素材（不进 git）
   renders/         渲染输出（不进 git）
-templates/         可复用模板
-scripts/           通用脚本（转写、去静音、拼接、字幕…）
+templates/         可复用模板（hyperframes-base：HyperFrames 新片起点）
+scripts/           通用脚本（hf.sh 跑 HyperFrames CLI、selfcheck.sh 渲染自检；以后加转写、去静音、拼接、字幕…）
 ```
 
 ## 规则
@@ -30,4 +30,5 @@ scripts/           通用脚本（转写、去静音、拼接、字幕…）
 - 大文件不进 git：素材、渲染结果、模型输出。成片要归档时问用户，放 NAS 视频共享（`/Volumes/video`）。
 - **本仓库是公开的**：不要复制没有开源协议的第三方 skill（例如 `remotion-dev/skills`）进来；不要写入密钥、内网地址或个人信息。
 - 第三方 skill 装进 `.claude/skills/` 前先读一遍代码，并在 README 记录来源和版本。
-- 每次渲染完自检：`ffprobe` 核对时长、分辨率、帧率；抽几帧图片亲眼看（文字溢出、重叠、乱码、黑帧）。
+- HyperFrames 新片从 `templates/hyperframes-base/` 复制（`rsync -a --exclude .hyperframes`），先读它的 README；CLI 一律用 `scripts/hf.sh`。
+- 每次渲染完自检：运行 `scripts/selfcheck.sh <成片> --project <src>`（ffprobe 核对时长、分辨率、帧率，扫黑帧 / 空帧 / 静止段，抽帧到 `renders/frames/`），然后逐张亲眼看抽帧（文字溢出、重叠、乱码、黑帧、动画提前结束）。

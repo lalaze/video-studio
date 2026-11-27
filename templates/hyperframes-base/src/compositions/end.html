@@ -1,0 +1,60 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #end-headline {
+      position: absolute;
+      left: 192px;
+      right: 192px;
+      top: 430px;
+      text-align: center;
+      font: 700 140px/1.1 var(--font-mono);
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    #end-footnote {
+      position: absolute;
+      left: 192px;
+      right: 192px;
+      top: 622px;
+      text-align: center;
+      font: 400 40px/1.4 var(--font-sans);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+  </style>
+  <div
+    id="root"
+    data-composition-id="end"
+    data-width="1920"
+    data-height="1080"
+    data-composition-variables='[{"id":"headline","type":"string","label":"Headline","default":"video-studio"},{"id":"footnote","type":"string","label":"Footnote","default":"用 Claude Code 做视频的工作台"}]'
+  >
+    <h1 id="end-headline" data-var-text="headline">video-studio</h1>
+    <p id="end-footnote" data-var-text="footnote">用 Claude Code 做视频的工作台</p>
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+
+      tl.fromTo(
+        "#end-headline",
+        { opacity: 0, filter: "blur(8px)" },
+        { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power3.out" },
+        0.02,
+      );
+      tl.fromTo(
+        "#end-footnote",
+        { opacity: 0, filter: "blur(6px)" },
+        { opacity: 1, filter: "blur(0px)", duration: 0.3, ease: "power3.out" },
+        0.2,
+      );
+      // Landed by 0.5 s, then dead still: the film's last line holds >= 2 s.
+
+      window.__timelines["end"] = tl;
+    })();
+  </script>
+</template>

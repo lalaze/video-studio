@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      /*
+       * Tokens and fonts for every scene. They MUST stay in this inline style block:
+       * the render compiler only scans inline style blocks (not linked .css files) to
+       * decide which bundled fonts to embed. Move these into a linked sheet and the
+       * render silently falls back to PingFang's Latin glyphs while previews still
+       * look right. Linked sheets in assets/ are fine for layout classes.
+       *
+       * Chinese: macOS system PingFang SC via local(). Local renders on a Mac only
+       * (lint warns font_face_local_only; that warning is expected). For cloud or
+       * non-Mac renders switch to "Noto Sans SC" (Google Fonts, OFL).
+       */
+      @font-face {
+        font-family: "VS PingFang";
+        src: local("PingFangSC-Regular"), local("PingFang SC Regular");
+        font-weight: 400;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: "VS PingFang";
+        src: local("PingFangSC-Semibold"), local("PingFang SC Semibold");
+        font-weight: 700;
+        font-style: normal;
+      }
+
+      :root {
+        --ground: #141413;
+        --panel: #1e1d1b;
+        --line: #34322e;
+        --ink: #f3efe6;
+        --muted: #a39e93;
+        --dim: #7a756c;
+        --accent: #d97757;
+        /* Latin from the bundled faces (Inter 400/700/900, JetBrains Mono), CJK from PingFang. */
+        --font-sans: "Inter", "VS PingFang", sans-serif;
+        --font-mono: "JetBrains Mono", "VS PingFang", monospace;
+      }
+      /* Name both stacks once here so the compiler embeds both faces. */
+      body {
+        font-family: var(--font-sans);
+      }
+      code {
+        font-family: var(--font-mono);
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--ground);
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: var(--ground);
+        /* faint static grid; delete for a plain ground */
+        background-image:
+          linear-gradient(rgba(243, 239, 230, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(243, 239, 230, 0.035) 1px, transparent 1px);
+        background-size: 120px 120px;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      The root holds only scene hosts (plus media and audio). One scene per file in
+      compositions/. A host's id, its data-composition-id, the scene root's
+      data-composition-id and the scene's timeline key are all the same string.
+      Scenes that never overlap share data-track-index="1".
+    -->
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="5"
+      data-fps="30"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div
+        id="title"
+        class="clip"
+        data-composition-id="title"
+        data-composition-src="compositions/title.html"
+        data-variable-values='{"title":"片名写在这里","subtitle":"一句副标题 · subtitle"}'
+        data-start="0"
+        data-duration="2.5"
+        data-track-index="1"
+        data-track-kind="graphics"
+        data-width="1920"
+        data-height="1080"
+      ></div>
+      <div
+        id="end"
+        class="clip"
+        data-composition-id="end"
+        data-composition-src="compositions/end.html"
+        data-variable-values='{"headline":"video-studio","footnote":"用 Claude Code 做视频的工作台"}'
+        data-start="2.5"
+        data-duration="2.5"
+        data-track-index="1"
+        data-track-kind="graphics"
+        data-width="1920"
+        data-height="1080"
+      ></div>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>
