@@ -1,0 +1,19 @@
+# deps / OS
+node_modules/
+.DS_Store
+
+# secrets / local settings
+.env
+.env.*
+.claude/settings.local.json
+
+# media: kept out of git
+videos/*/assets/
+**/renders/
+*.mp4
+*.mov
+*.webm
+*.mkv
+*.wav
+*.mp3
+*.m4a
