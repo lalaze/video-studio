@@ -3,7 +3,7 @@
 
 所有步骤都由片子目录里的 prompts/shots.json（镜头清单）驱动，结果写回这份清单：
 
-  film.py plan      DIR [--write [-m 说明]] 校验清单、列出每镜进度；--write 存版本并重写 storyboard.md
+  film.py plan      DIR [--write [-m 说明]] 校验清单、列出每镜进度；--write 存版本并生成 storyboard.md 和分镜页面
   film.py versions  DIR                     列出分镜版本历史和每次改动摘要
   film.py diff      DIR [A] [B]             按镜头对比两版分镜（默认最新版 → 当前）
   film.py revert    DIR VER [--shots ...] [-m 说明]
@@ -26,8 +26,10 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import difflib
+import html
 import json
 import math
 import os
@@ -136,6 +138,16 @@ def md(text: str) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "\\|")
 
 
+def md_inline(text: str) -> str:
+    """Escape HTML-like placeholders such as <Picture 1> for Markdown prose."""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _or_unwritten(val: object) -> str:
+    s = (str(val) if val is not None else "").strip()
+    return s if s else "（未写）"
+
+
 def reading_words(text: str) -> int:
     """Rough word count for the reading-time floor: CJK chars / 2 + Latin words."""
     cjk = len(re.findall(r"[㐀-鿿]", text))
@@ -160,6 +172,8 @@ def validate(vdir: Path, data: dict) -> tuple[list[str], list[str]]:
             errors.append(f"参考图名 {name!r} 只能用小写字母、数字、- _")
         if not (r.get("prompt") or r.get("image")):
             errors.append(f"参考图 {name} 既没有 prompt 也没有 image")
+        if not (r.get("desc") or "").strip():
+            warns.append(f"参考图 {name}: 没写说明（desc）")
         if r.get("image") and not (vdir / r["image"]).is_file():
             errors.append(f"参考图 {name} 的 image 不存在：{r['image']}")
     shots = data.get("shots") or []
@@ -187,6 +201,8 @@ def validate(vdir: Path, data: dict) -> tuple[list[str], list[str]]:
         kf = s.get("keyframe") or {}
         if not kf.get("prompt") and not kf.get("image"):
             errors.append(f"{sid}: keyframe.prompt 是空的")
+        if not (kf.get("desc") or "").strip():
+            warns.append(f"{sid}: 没写画面说明（keyframe.desc，中文，给用户看）")
         for r in kf.get("refs") or []:
             if r not in refs:
                 errors.append(f"{sid}: refs 里的 {r!r} 没在 references 里定义")
@@ -195,6 +211,8 @@ def validate(vdir: Path, data: dict) -> tuple[list[str], list[str]]:
         if kf.get("image") and not (vdir / kf["image"]).is_file():
             errors.append(f"{sid}: keyframe.image 不存在：{kf['image']}")
         mo = s.get("motion") or {}
+        if not (mo.get("desc") or "").strip():
+            warns.append(f"{sid}: 没写动作说明（motion.desc）")
         if mo.get("camera", "static") not in CAMERAS:
             errors.append(f"{sid}: motion.camera 只能是 {', '.join(CAMERAS)}")
         if mo.get("clip") and not (vdir / mo["clip"]).is_file():
@@ -451,6 +469,7 @@ def cmd_plan(a) -> int:
         if is_template(vdir):
             print("模板目录不存版本")
             write_storyboard(vdir, data)
+            print(f"已重写 {vdir / 'storyboard.md'}")
         else:
             if latest is None or sb != latest["storyboard"]:
                 note = (a.message or "").strip() or ("初稿" if latest is None else "（未写说明）")
@@ -460,12 +479,15 @@ def cmd_plan(a) -> int:
                 else:
                     d = diff_storyboards(latest["storyboard"], sb)
                     print(f"已存为 v{ver['version']}（{ver['note']}）：{diff_summary(d)}")
+                    for w_ in desc_sync_warnings(latest["storyboard"], sb):
+                        print(f"  ⚠ {w_}")
                     warn_stale_picks(stale_picks(latest["storyboard"], data))
             else:
                 ver = latest
                 print(f"分镜和 v{latest['version']} 一样，没存新版本")
             write_storyboard(vdir, data, ver=ver)
-        print(f"已重写 {vdir / 'storyboard.md'}")
+            print(f"已重写 {vdir / 'storyboard.md'}")
+            print("分镜页面：assets/review/storyboard.html")
     else:
         if is_template(vdir) and latest is None:
             print("版本：模板目录不存版本")
@@ -476,6 +498,596 @@ def cmd_plan(a) -> int:
         else:
             print(f"版本：v{latest['version']}（有未保存的改动 → plan --write -m 说明）")
     return 0
+
+
+def keyframe_status(image: str | None) -> str:
+    if not image:
+        return "未选"
+    if "/trial/" in image:
+        return "试稿"
+    if "/final/" in image:
+        return "定稿"
+    return "已选"
+
+
+def clip_status(clip: str | None) -> str:
+    ck = clip_kind(clip)
+    if ck is None:
+        return "未选"
+    return {"placeholder": "占位", "h3-trial": "h3 试稿", "h3-final": "h3 定稿"}.get(ck, "已选")
+
+
+def _safe_rel(vdir: Path, p: str | None) -> str:
+    """Return a relative POSIX path for display; never leak a local absolute path."""
+    if not p:
+        return ""
+    pp = Path(p)
+    return rel(vdir, pp) if pp.is_absolute() else pp.as_posix()
+
+
+def make_thumbnail_data_uri(path: Path) -> str | None:
+    """Scale an image to width 480 JPEG and return a base64 data URI, or None on failure."""
+    if not path.is_file():
+        return None
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(path), "-vf", "scale=480:-2",
+             "-frames:v", "1", "-q:v", "4", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"],
+            capture_output=True, check=False,
+        )
+    except OSError:
+        return None
+    if r.returncode != 0 or not r.stdout:
+        return None
+    return "data:image/jpeg;base64," + base64.b64encode(r.stdout).decode("ascii")
+
+
+def _prev_version(vdir: Path, ver: dict | None) -> dict | None:
+    if ver is None:
+        return None
+    target_n = ver.get("version")
+    prev: dict | None = None
+    for v in load_versions(vdir):
+        if v.get("version") == target_n:
+            return prev
+        prev = v
+    return None
+
+
+_PROMPT_DETAIL_FIELDS = {
+    "keyframe.prompt", "keyframe.refs",
+    "motion.camera", "motion.prompt", "motion.sound", "motion.backend",
+}
+
+_STORYBOARD_CSS = """\
+:root {
+  --bg: #f8f9fa;
+  --fg: #18181b;
+  --muted: #52525b;
+  --card: #ffffff;
+  --subtle: #f1f3f5;
+  --border: #e4e4e7;
+  --thumb-bg: #eceef1;
+  --changed-bg: #fffbeb;
+  --changed-border: #d97706;
+  --changed-fg: #92400e;
+  --new-bg: #ecfdf5;
+  --new-border: #059669;
+  --new-fg: #065f46;
+  --del-bg: #fef2f2;
+  --del-border: #dc2626;
+  --del-fg: #991b1b;
+  --pill-bg: #f4f4f5;
+  --pill-fg: #3f3f46;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111214;
+    --fg: #f4f4f5;
+    --muted: #a1a1aa;
+    --card: #1a1c20;
+    --subtle: #23262c;
+    --border: #2e323a;
+    --thumb-bg: #141619;
+    --changed-bg: rgba(217, 119, 6, 0.16);
+    --changed-border: #f59e0b;
+    --changed-fg: #fcd34d;
+    --new-bg: rgba(16, 185, 129, 0.16);
+    --new-border: #10b981;
+    --new-fg: #6ee7b7;
+    --del-bg: rgba(239, 68, 68, 0.16);
+    --del-border: #ef4444;
+    --del-fg: #fca5a5;
+    --pill-bg: #272a31;
+    --pill-fg: #d4d4d8;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-x: hidden;
+}
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.header {
+  margin-bottom: 18px;
+}
+h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+h2 {
+  margin: 22px 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.version-line {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+.meta-line {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+.change-banner {
+  margin: 10px 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--subtle);
+  border: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.change-banner.has-diff {
+  background: var(--changed-bg);
+  border-color: var(--changed-border);
+  color: var(--changed-fg);
+}
+details {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--subtle);
+  padding: 6px 10px;
+}
+details > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+  list-style-position: outside;
+}
+details > summary.changed {
+  color: var(--changed-fg);
+  border-left: none;
+  background: transparent;
+  padding-left: 0;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 16px;
+}
+.card {
+  min-width: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.card.is-changed {
+  border-color: var(--changed-border);
+}
+.card.is-new {
+  border-color: var(--new-border);
+}
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.shot-id {
+  font-weight: 700;
+  font-size: 15px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.time-range {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.meta-pill {
+  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--pill-bg);
+  color: var(--pill-fg);
+}
+.meta-pill.changed {
+  border-left: none;
+  padding: 1px 7px;
+  background: var(--changed-bg);
+  color: var(--changed-fg);
+  border: 1px solid var(--changed-border);
+}
+.badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.badge.changed {
+  border-left: none;
+  background: var(--changed-bg);
+  color: var(--changed-fg);
+  border: 1px solid var(--changed-border);
+}
+.badge.new {
+  background: var(--new-bg);
+  color: var(--new-fg);
+  border: 1px solid var(--new-border);
+}
+.thumb {
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--thumb-bg);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
+}
+.thumb.placeholder {
+  color: var(--muted);
+  font-size: 13px;
+}
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field {
+  padding: 4px 6px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.field .label,
+.prompt-row .label {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-right: 6px;
+}
+.field.changed,
+.prompt-row.changed {
+  border-left: 3px solid var(--changed-border);
+  background: var(--changed-bg);
+  padding-left: 8px;
+  border-radius: 4px;
+}
+.status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.pick-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.prompt-row {
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.deleted-section {
+  margin-top: 20px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--del-bg);
+  border: 1px solid var(--del-border);
+  color: var(--del-fg);
+}
+"""
+
+
+def _render_thumb(vdir: Path, img_rel: str | None, alt: str, aspect_css: str) -> str:
+    esc = html.escape
+    style_attr = f' style="aspect-ratio: {aspect_css};"'
+    if not img_rel:
+        return f'<div class="thumb placeholder empty"{style_attr}>还没出图</div>'
+    uri = make_thumbnail_data_uri(vdir / img_rel)
+    if uri is None:
+        return f'<div class="thumb placeholder missing"{style_attr}>图片读不到</div>'
+    return f'<div class="thumb"{style_attr}><img src="{uri}" alt="{esc(alt)}"></div>'
+
+
+def write_storyboard_html(vdir: Path, data: dict, ver: dict | None = None) -> Path:
+    """Write a self-contained read-only storyboard HTML review page under assets/review/."""
+    esc = html.escape
+    w, h, fps, aspect = fmt(data)
+    starts, total = timeline(data)
+    shots = data.get("shots") or []
+    refs = data.get("references") or {}
+    title = str(data.get("title") or vdir.name)
+    aspect_css = f"{w} / {h}"
+
+    prev_ver = _prev_version(vdir, ver)
+    diff: dict | None = None
+    if prev_ver is not None:
+        cur_sb = ver["storyboard"] if (ver is not None and "storyboard" in ver) else storyboard(data)
+        diff = diff_storyboards(prev_ver["storyboard"], cur_sb)
+
+    global_items = diff["global"] if diff else []
+    mod_map: dict[str, list[tuple[str, object, object]]] = {sid: ch for sid, ch in diff["modified"]} if diff else {}
+    added_ids: set[str] = {sid for sid, _ in diff["added"]} if diff else set()
+    deleted_ids: list[str] = list(diff["deleted"]) if diff else []
+    reordered = diff["reordered"] if diff else None
+
+    style_changed = any(k == "field" and lbl == "关键帧风格" for k, lbl, _, _ in global_items)
+    video_style_changed = any(k == "field" and lbl == "视频风格" for k, lbl, _, _ in global_items)
+
+    parts: list[str] = [
+        "<!DOCTYPE html>",
+        '<html lang="zh-CN">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        f"<title>{esc(title)} · 分镜</title>",
+        f"<style>\n{_STORYBOARD_CSS}</style>",
+        "</head>",
+        "<body>",
+        '<main class="page">',
+        '<header class="header">',
+        f"<h1>{esc(title)}</h1>",
+    ]
+    if ver is not None:
+        parts.append(
+            f'<p class="version-line">v{esc(str(ver["version"]))} · '
+            f'{esc(short_time(ver.get("time", "")))} · {esc(str(ver.get("note", "")))}</p>'
+        )
+    parts.append(
+        f'<p class="meta-line">总长 {total:.1f} s · {w}×{h} · {fps} fps · {esc(aspect)} · {len(shots)} 镜</p>'
+    )
+
+    if diff is None:
+        parts.append('<div class="change-banner initial" data-change="initial">初稿</div>')
+    else:
+        banner_parts: list[str] = []
+        if global_items:
+            g_labels = list(dict.fromkeys(lbl for _, lbl, _, _ in global_items))
+            banner_parts.append("、".join(g_labels))
+        if reordered:
+            ids_a, ids_b = reordered
+            banner_parts.append(f"顺序变了（{' '.join(ids_a)} → {' '.join(ids_b)}）")
+        shot_parts: list[str] = []
+        for sid, ch in diff["modified"]:
+            labels = list(dict.fromkeys(shot_label(p) for p, _, _ in ch))
+            shot_parts.append(f"{sid} {'、'.join(labels)}")
+        if diff["added"]:
+            shot_parts.append(f"新增 {'、'.join(sid for sid, _ in diff['added'])}")
+        if diff["deleted"]:
+            shot_parts.append(f"删除 {'、'.join(diff['deleted'])}")
+        if shot_parts:
+            banner_parts.append("；".join(shot_parts))
+        banner_text = f"本版改动（相对 v{prev_ver['version']}）：{'；'.join(banner_parts) if banner_parts else '无改动'}"
+        cls = "change-banner has-diff" if diff_has_changes(diff) else "change-banner"
+        parts.append(f'<div class="{cls}" data-change="diff">{esc(banner_text)}</div>')
+
+    if data.get("style") or data.get("video_style") or style_changed or video_style_changed:
+        any_style_ch = style_changed or video_style_changed
+        sum_cls = ' class="changed"' if any_style_ch else ""
+        sum_suffix = "（本版有改动）" if any_style_ch else ""
+        parts.append('<details class="style-details">')
+        parts.append(f"<summary{sum_cls}>风格设定{sum_suffix}</summary>")
+        parts.append('<div class="prompt-list">')
+        st_cls = "prompt-row changed" if style_changed else "prompt-row"
+        parts.append(
+            f'<div class="{st_cls}"><span class="label">关键帧风格</span>'
+            f'<span class="val">{esc(_or_unwritten(data.get("style")))}</span></div>'
+        )
+        if data.get("video_style") or video_style_changed:
+            vst_cls = "prompt-row changed" if video_style_changed else "prompt-row"
+            parts.append(
+                f'<div class="{vst_cls}"><span class="label">视频风格</span>'
+                f'<span class="val">{esc(_or_unwritten(data.get("video_style")))}</span></div>'
+            )
+        parts.append("</div></details>")
+
+    parts.append("</header>")
+
+    if refs:
+        parts.append('<section class="section">')
+        parts.append("<h2>参考图</h2>")
+        parts.append('<div class="grid ref-grid">')
+        for name, r in refs.items():
+            r = r or {}
+            ref_added = any(k == "ref_add" and lbl == f"+ 参考图 {name}" for k, lbl, _, _ in global_items)
+            ref_desc_ch = any(k == "field" and lbl == f"参考图 {name} 说明" for k, lbl, _, _ in global_items)
+            ref_prompt_ch = any(k == "field" and lbl == f"参考图 {name}" for k, lbl, _, _ in global_items)
+            ref_ch_labels: list[str] = []
+            if ref_desc_ch:
+                ref_ch_labels.append("说明")
+            if ref_prompt_ch:
+                ref_ch_labels.append("提示词")
+            card_cls = "card ref-card"
+            badge_html = ""
+            if ref_added:
+                card_cls += " is-new"
+                badge_html = '<span class="badge new">新增</span>'
+            elif ref_ch_labels:
+                card_cls += " is-changed"
+                badge_html = f'<span class="badge changed">本版改动：{esc("、".join(ref_ch_labels))}</span>'
+            parts.append(f'<article class="{card_cls}" data-ref="{esc(name)}">')
+            parts.append(f'<div class="card-head"><span class="shot-id">{esc(name)}</span>{badge_html}</div>')
+            parts.append(_render_thumb(vdir, r.get("image"), f"参考图 {name}", aspect_css))
+            d_cls = "field changed" if ref_desc_ch else "field"
+            parts.append(
+                f'<div class="fields"><div class="{d_cls}" data-field="desc">'
+                f'<span class="label">说明</span><span class="val">{esc(_or_unwritten(r.get("desc")))}</span>'
+                f"</div></div>"
+            )
+            img_rel = _safe_rel(vdir, r.get("image"))
+            img_stat = keyframe_status(r.get("image"))
+            path_html = f' <code class="pick-path">{esc(img_rel)}</code>' if img_rel else ""
+            parts.append(f'<div class="status-bar"><span>参考图：{esc(img_stat)}{path_html}</span></div>')
+            p_sum_cls = ' class="changed"' if ref_prompt_ch else ""
+            p_sum_sfx = "（本版有改动）" if ref_prompt_ch else ""
+            p_row_cls = "prompt-row changed" if ref_prompt_ch else "prompt-row"
+            parts.append("<details>")
+            parts.append(f"<summary{p_sum_cls}>给模型的提示词{p_sum_sfx}</summary>")
+            parts.append(
+                f'<div class="prompt-list"><div class="{p_row_cls}" data-field="prompt">'
+                f'<span class="label">提示词</span><span class="val">{esc(_or_unwritten(r.get("prompt")))}</span>'
+                f"</div></div></details>"
+            )
+            parts.append("</article>")
+        parts.append("</div></section>")
+
+    parts.append('<section class="section">')
+    parts.append("<h2>分镜</h2>")
+    parts.append('<div class="grid shot-grid">')
+    for s, st in zip(shots, starts):
+        sid = str(s["id"])
+        kf, mo = s.get("keyframe") or {}, s.get("motion") or {}
+        dur = float(s["duration"])
+        tr = str(s.get("transition", "cut"))
+        ch_list = mod_map.get(sid, [])
+        ch_fields = {p for p, _, _ in ch_list}
+        is_new = sid in added_ids
+
+        card_cls = "card shot-card"
+        badge_html = ""
+        if is_new:
+            card_cls += " is-new"
+            badge_html = '<span class="badge new">新增</span>'
+        elif ch_list:
+            card_cls += " is-changed"
+            ch_labels = list(dict.fromkeys(shot_label(p) for p, _, _ in ch_list))
+            badge_html = f'<span class="badge changed">本版改动：{esc("、".join(ch_labels))}</span>'
+
+        dur_cls = "meta-pill changed" if "duration" in ch_fields else "meta-pill"
+        tr_cls = "meta-pill changed" if "transition" in ch_fields else "meta-pill"
+        parts.append(f'<article class="{card_cls}" data-shot="{esc(sid)}">')
+        parts.append(
+            '<div class="card-head">'
+            f'<span class="shot-id">{esc(sid)}</span>'
+            f'<span class="time-range">{st:.1f}–{st + dur:.1f} s</span>'
+            f'<span class="{dur_cls}">{dur:g} s</span>'
+            f'<span class="{tr_cls}">{esc(tr)}</span>'
+            f"{badge_html}"
+            "</div>"
+        )
+        parts.append(_render_thumb(vdir, kf.get("image"), f"{sid} 关键帧", aspect_css))
+
+        parts.append('<div class="fields">')
+        for fkey, flabel, fval in (
+            ("keyframe.desc", "画面说明", kf.get("desc")),
+            ("motion.desc", "动作说明", mo.get("desc")),
+            ("line", "台词", s.get("line")),
+            ("notes", "备注", s.get("notes")),
+        ):
+            f_cls = "field changed" if fkey in ch_fields else "field"
+            parts.append(
+                f'<div class="{f_cls}" data-field="{esc(fkey)}">'
+                f'<span class="label">{esc(flabel)}</span>'
+                f'<span class="val">{esc(_or_unwritten(fval))}</span></div>'
+            )
+        parts.append("</div>")
+
+        kf_rel = _safe_rel(vdir, kf.get("image"))
+        cl_rel = _safe_rel(vdir, mo.get("clip"))
+        kf_path_html = f' <code class="pick-path">{esc(kf_rel)}</code>' if kf_rel else ""
+        cl_path_html = f' <code class="pick-path">{esc(cl_rel)}</code>' if cl_rel else ""
+        parts.append(
+            '<div class="status-bar">'
+            f'<span>关键帧：{esc(keyframe_status(kf.get("image")))}{kf_path_html}</span>'
+            f'<span>视频：{esc(clip_status(mo.get("clip")))}{cl_path_html}</span>'
+            "</div>"
+        )
+
+        prompt_changed = bool(ch_fields & _PROMPT_DETAIL_FIELDS)
+        p_sum_cls = ' class="changed"' if prompt_changed else ""
+        p_sum_sfx = "（本版有改动）" if prompt_changed else ""
+        parts.append("<details>")
+        parts.append(f"<summary{p_sum_cls}>给模型的提示词{p_sum_sfx}</summary>")
+        parts.append('<div class="prompt-list">')
+        prompt_rows: list[tuple[str, str, str]] = [
+            ("keyframe.prompt", "画面", _or_unwritten(kf.get("prompt"))),
+        ]
+        if kf.get("refs") or "keyframe.refs" in ch_fields:
+            refs_text = "、".join(str(r) for r in (kf.get("refs") or [])) or "（无）"
+            prompt_rows.append(("keyframe.refs", "参考图", refs_text))
+        prompt_rows.append(("motion.camera", "运镜", str(mo.get("camera", "static"))))
+        prompt_rows.append(("motion.prompt", "动作", _or_unwritten(mo.get("prompt"))))
+        prompt_rows.append(("motion.sound", "声音", _or_unwritten(mo.get("sound"))))
+        if mo.get("backend") or "motion.backend" in ch_fields:
+            prompt_rows.append(("motion.backend", "后端", str(mo.get("backend") or "（默认）")))
+        for pkey, plabel, pval in prompt_rows:
+            p_cls = "prompt-row changed" if pkey in ch_fields else "prompt-row"
+            parts.append(
+                f'<div class="{p_cls}" data-field="{esc(pkey)}">'
+                f'<span class="label">{esc(plabel)}</span>'
+                f'<span class="val">{esc(pval)}</span></div>'
+            )
+        parts.append("</div></details>")
+        parts.append("</article>")
+    parts.append("</div></section>")
+
+    if deleted_ids:
+        parts.append(
+            f'<section class="deleted-section" data-deleted="true">'
+            f'本版删除：{esc("、".join(deleted_ids))}</section>'
+        )
+
+    parts.append("</main></body></html>\n")
+    out = vdir / "assets" / "review" / "storyboard.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".html.tmp")
+    tmp.write_text("\n".join(parts), encoding="utf-8")
+    tmp.replace(out)
+    return out
 
 
 def write_storyboard(vdir: Path, data: dict, ver: dict | None = None) -> None:
@@ -499,19 +1111,36 @@ def write_storyboard(vdir: Path, data: dict, ver: dict | None = None) -> None:
         lines += [f"视频风格：{data['video_style']}", ""]
     refs = data.get("references", {}) or {}
     if refs:
-        lines += ["## 参考图（人物 / 风格设定）", "", "| 名字 | 提示词 |", "|---|---|"]
-        lines += [f"| `{n}` | {md(r.get('prompt', ''))} |" for n, r in refs.items()]
+        lines += ["## 参考图（人物 / 风格设定）", "", "| 名字 | 说明 | 提示词 |", "|---|---|---|"]
+        lines += [
+            f"| `{n}` | {md(_or_unwritten(r.get('desc')))} | {md(_or_unwritten(r.get('prompt')))} |"
+            for n, r in refs.items()
+        ]
         lines.append("")
-    lines += ["## 分镜", "", "| # | 时间 | 画面（关键帧） | 运镜 / 动作 | 声音 | 台词 | 转场 |",
-              "|---|---|---|---|---|---|---|"]
+    lines += ["## 分镜", "", "| # | 时间 | 画面说明 | 动作说明 | 台词 | 转场 |",
+              "|---|---|---|---|---|---|"]
     for s, st in zip(data["shots"], starts):
         kf, mo = s.get("keyframe") or {}, s.get("motion") or {}
-        ref = f"（参考 {', '.join(kf['refs'])}）" if kf.get("refs") else ""
-        lines.append(f"| {s['id']} | {st:.1f} – {st + s['duration']:.1f} | {md(kf.get('prompt', ''))}{ref} | "
-                     f"{mo.get('camera', 'static')}；{md(mo.get('prompt', ''))} | {md(mo.get('sound', ''))} | "
-                     f"{md(s.get('line', ''))} | {s.get('transition', 'cut')} |")
-    lines.append("")
+        lines.append(
+            f"| {md(s['id'])} | {st:.1f} – {st + s['duration']:.1f} | "
+            f"{md(_or_unwritten(kf.get('desc')))} | {md(_or_unwritten(mo.get('desc')))} | "
+            f"{md(_or_unwritten(s.get('line')))} | {md(s.get('transition', 'cut'))} |"
+        )
+    lines += ["", "## 给模型的提示词", ""]
+    for s in data["shots"]:
+        kf, mo = s.get("keyframe") or {}, s.get("motion") or {}
+        lines.append(f"### {s['id']}")
+        lines.append("")
+        lines.append(f"- 画面：{md_inline(_or_unwritten(kf.get('prompt')))}")
+        if kf.get("refs"):
+            lines.append(f"- 参考图：{', '.join(f'`{r}`' for r in kf['refs'])}")
+        lines.append(f"- 运镜：{mo.get('camera', 'static')}")
+        lines.append(f"- 动作：{md_inline(_or_unwritten(mo.get('prompt')))}")
+        lines.append(f"- 声音：{md_inline(_or_unwritten(mo.get('sound')))}")
+        lines.append("")
     (vdir / "storyboard.md").write_text("\n".join(lines), encoding="utf-8")
+    if not is_template(vdir):
+        write_storyboard_html(vdir, data, ver=ver)
 
 
 # ---------------------------------------------------------------- versions
@@ -520,8 +1149,10 @@ def write_storyboard(vdir: Path, data: dict, ver: dict | None = None) -> None:
 _MISSING = object()
 
 SHOT_LABELS = {
+    "keyframe.desc": "画面说明",
     "keyframe.prompt": "画面",
     "keyframe.refs": "参考图",
+    "motion.desc": "动作说明",
     "motion.camera": "运镜",
     "motion.prompt": "动作",
     "motion.sound": "声音",
@@ -706,7 +1337,12 @@ def diff_storyboards(sb_a: dict, sb_b: dict) -> dict:
                 ra, rb = refs_a[name], refs_b[name]
                 if isinstance(ra, dict) and isinstance(rb, dict):
                     for sub_p, va, vb in _diff_dicts(ra, rb):
-                        lbl = f"参考图 {name}" if sub_p == "prompt" else f"references.{name}.{sub_p}"
+                        if sub_p == "desc":
+                            lbl = f"参考图 {name} 说明"
+                        elif sub_p == "prompt":
+                            lbl = f"参考图 {name}"
+                        else:
+                            lbl = f"references.{name}.{sub_p}"
                         global_items.append(("field", lbl, va, vb))
                 elif not _same_val(ra, rb):
                     global_items.append(("field", f"references.{name}", ra, rb))
@@ -876,6 +1512,47 @@ def format_diff(label_a: str, label_b: str, d: dict) -> str:
         ids_a, ids_b = d["reordered"]
         lines.append(f"顺序：{' '.join(ids_a)} → {' '.join(ids_b)}")
     return "\n".join(lines)
+
+
+def desc_sync_warnings(old_sb: dict, new_sb: dict) -> list[str]:
+    """Remind when Chinese desc and English prompt (or motion fields) were not updated together."""
+    warns: list[str] = []
+    old_refs, new_refs = old_sb.get("references") or {}, new_sb.get("references") or {}
+    if isinstance(old_refs, dict) and isinstance(new_refs, dict):
+        for name, new_r in new_refs.items():
+            old_r = old_refs.get(name)
+            if not (isinstance(old_r, dict) and isinstance(new_r, dict)):
+                continue
+            d_ch = (old_r.get("desc") or "") != (new_r.get("desc") or "")
+            p_ch = (old_r.get("prompt") or "") != (new_r.get("prompt") or "")
+            if d_ch != p_ch:
+                which = "说明" if d_ch else "英文提示词"
+                warns.append(f"参考图 {name} 说明和英文提示词（prompt）要一起改，这次只改了{which}")
+
+    old_shots = {s["id"]: s for s in old_sb.get("shots") or []}
+    for new_s in new_sb.get("shots") or []:
+        sid = new_s["id"]
+        old_s = old_shots.get(sid)
+        if old_s is None:
+            continue
+        old_kf, new_kf = old_s.get("keyframe") or {}, new_s.get("keyframe") or {}
+        kfd_ch = (old_kf.get("desc") or "") != (new_kf.get("desc") or "")
+        kfp_ch = (old_kf.get("prompt") or "") != (new_kf.get("prompt") or "")
+        if kfd_ch != kfp_ch:
+            which = "画面说明" if kfd_ch else "英文提示词"
+            warns.append(f"{sid} 画面说明和英文画面提示词（keyframe.prompt）要一起改，这次只改了{which}")
+
+        old_mo, new_mo = old_s.get("motion") or {}, new_s.get("motion") or {}
+        mod_ch = (old_mo.get("desc") or "") != (new_mo.get("desc") or "")
+        moe_ch = (
+            (old_mo.get("prompt") or "") != (new_mo.get("prompt") or "")
+            or (old_mo.get("sound") or "") != (new_mo.get("sound") or "")
+            or (old_mo.get("camera") or "static") != (new_mo.get("camera") or "static")
+        )
+        if mod_ch != moe_ch:
+            which = "动作说明" if mod_ch else "英文提示词"
+            warns.append(f"{sid} 动作说明和英文动作提示词（motion.prompt / sound / camera）要一起改，这次只改了{which}")
+    return warns
 
 
 def stale_picks(old_sb: dict, new_data: dict) -> list[dict]:
@@ -1146,6 +1823,8 @@ def cmd_revert(a) -> int:
     print(f"已存为 v{ver['version']}（{ver['note']}）：{diff_summary(d)}")
     print_cleared_picks(stale)
     print(f"已重写 {vdir / 'storyboard.md'}")
+    if not is_template(vdir):
+        print("分镜页面：assets/review/storyboard.html")
     return 0
 
 
@@ -1731,7 +2410,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sp = sub.add_parser("plan", help="校验镜头清单、看进度")
     sp.add_argument("dir")
-    sp.add_argument("--write", action="store_true", help="存分镜版本并按 shots.json 重写 storyboard.md")
+    sp.add_argument("--write", action="store_true", help="存分镜版本并生成 storyboard.md 和分镜页面")
     sp.add_argument("-m", "--message", help="存版时的说明（和 --write 一起用）")
     sp.set_defaults(fn=cmd_plan)
 

@@ -6,7 +6,10 @@ import contextlib
 import copy
 import io
 import json
+import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -520,6 +523,396 @@ class TestRevert(FilmVersionTestBase):
         d5["shots"][1]["notes"] = "改备注"
         d5["shots"][2]["line"] = "改台词"
         self.assertEqual(film.stale_picks(v1_sb, d5), [])
+
+
+class TestChineseDescAndStoryboard(FilmVersionTestBase):
+    def _strip_desc(self, data: dict) -> dict:
+        out = copy.deepcopy(data)
+        for r in (out.get("references") or {}).values():
+            r.pop("desc", None)
+        for s in out.get("shots") or []:
+            (s.get("keyframe") or {}).pop("desc", None)
+            (s.get("motion") or {}).pop("desc", None)
+        return out
+
+    def _without_warn_lines(self, text: str) -> str:
+        return "\n".join(line for line in text.splitlines() if not line.startswith("  ⚠ "))
+
+    def test_desc_never_enters_prompts_or_dry_run(self) -> None:
+        vdir_with = self.vdir
+        vdir_without = self.root / "002-no-desc"
+        (vdir_without / "prompts").mkdir(parents=True)
+
+        data_with = self.read_shots(vdir_with)
+        data_without = self._strip_desc(data_with)
+        self.write_shots(data_without, vdir_without)
+
+        env = {"H3_BIN": "__nonexistent_h3_for_test__"}
+        with mock.patch.dict(os.environ, env):
+            # 1. keyframes dry run (ref:keeper + s01 + s03 gen)
+            rc1, out1, err1 = self.run_cli("keyframes", str(vdir_with))
+            rc2, out2, err2 = self.run_cli("keyframes", str(vdir_without))
+            self.assertEqual(rc1, 0, err1)
+            self.assertEqual(rc2, 0, err2)
+            self.assertEqual(self._without_warn_lines(out1), self._without_warn_lines(out2))
+            self.assertIn("远景定场", data_with["shots"][0]["keyframe"]["desc"])
+            self.assertNotIn("远景定场", out1)
+            self.assertNotIn("守塔人", out1)
+
+            # 2. clips --backend h3-video dry run (pick empty png keyframes so no shot is skipped)
+            for vdir, data in ((vdir_with, data_with), (vdir_without, data_without)):
+                for s in data["shots"]:
+                    s["keyframe"]["image"] = self.touch_asset(f"assets/keyframes/{s['id']}/trial/kf.png", vdir)
+                self.write_shots(data, vdir)
+            rc3, out3, err3 = self.run_cli("clips", str(vdir_with), "--backend", "h3-video")
+            rc4, out4, err4 = self.run_cli("clips", str(vdir_without), "--backend", "h3-video")
+            self.assertEqual(rc3, 0, err3)
+            self.assertEqual(rc4, 0, err4)
+            self.assertEqual(self._without_warn_lines(out3), self._without_warn_lines(out4))
+            self.assertNotIn("镜头缓缓推近灯塔", out3)
+            self.assertNotIn("远景定场", out3)
+            self.assertIn("integrated_multimodal_description:", out3)
+
+            # 3. keyframes dry run with ref image picked (covers h3 edit for s02 when ffmpeg/ffprobe exist)
+            if shutil.which("ffmpeg") and shutil.which("ffprobe"):
+                for vdir, data in ((vdir_with, data_with), (vdir_without, data_without)):
+                    ref_png = vdir / "assets/keyframes/ref-keeper/trial/keeper.png"
+                    ref_png.parent.mkdir(parents=True, exist_ok=True)
+                    subprocess.run(
+                        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=navy:s=1920x1080:d=0.1",
+                         "-frames:v", "1", str(ref_png)],
+                        check=True,
+                    )
+                    data["references"]["keeper"]["image"] = "assets/keyframes/ref-keeper/trial/keeper.png"
+                    for s in data["shots"]:
+                        s["keyframe"]["image"] = None
+                    self.write_shots(data, vdir)
+                rc5, out5, err5 = self.run_cli("keyframes", str(vdir_with), "--redo")
+                rc6, out6, err6 = self.run_cli("keyframes", str(vdir_without), "--redo")
+                self.assertEqual(rc5, 0, err5)
+                self.assertEqual(rc6, 0, err6)
+                self.assertEqual(self._without_warn_lines(out5), self._without_warn_lines(out6))
+                self.assertIn(" edit ", out5)
+                self.assertNotIn("提着铜油灯", out5)
+
+    def test_missing_desc_warnings_and_sync_reminders(self) -> None:
+        # Missing desc triggers warnings (not errors)
+        data = self.read_shots()
+        del data["references"]["keeper"]["desc"]
+        del data["shots"][1]["keyframe"]["desc"]
+        del data["shots"][1]["motion"]["desc"]
+        self.write_shots(data)
+
+        rc, out, err = self.run_cli("plan", str(self.vdir))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("⚠ 参考图 keeper: 没写说明（desc）", out)
+        self.assertIn("⚠ s02: 没写画面说明（keyframe.desc，中文，给用户看）", out)
+        self.assertIn("⚠ s02: 没写动作说明（motion.desc）", out)
+
+        # Restore full template with desc and save v1
+        shutil.copy2(TEMPLATE_SHOTS, self.vdir / "prompts" / "shots.json")
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "初稿")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("没写画面说明", out)
+        self.assertNotIn("没写动作说明", out)
+        self.assertNotIn("没写说明（desc）", out)
+
+        # 1. keyframe.desc only -> reminder, shots.json untouched
+        d = self.read_shots()
+        d["shots"][1]["keyframe"]["desc"] += "（改画面说明）"
+        before = copy.deepcopy(d)
+        self.write_shots(d)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "只改画面说明")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("⚠ s02 画面说明和英文画面提示词（keyframe.prompt）要一起改，这次只改了画面说明", out)
+        self.assertEqual(self.read_shots(), before)
+
+        # 2. keyframe.prompt only -> reminder
+        d = self.read_shots()
+        d["shots"][1]["keyframe"]["prompt"] += ", extra fog"
+        before = copy.deepcopy(d)
+        self.write_shots(d)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "只改画面英文")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("⚠ s02 画面说明和英文画面提示词（keyframe.prompt）要一起改，这次只改了英文提示词", out)
+        self.assertEqual(self.read_shots(), before)
+
+        # 3. motion.desc only -> reminder
+        d = self.read_shots()
+        d["shots"][1]["motion"]["desc"] += "（改动作说明）"
+        before = copy.deepcopy(d)
+        self.write_shots(d)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "只改动作说明")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("⚠ s02 动作说明和英文动作提示词（motion.prompt / sound / camera）要一起改，这次只改了动作说明", out)
+        self.assertEqual(self.read_shots(), before)
+
+        # 4. motion.prompt / sound / camera only -> reminder (test each)
+        for field, val in (("prompt", " extra sway."), ("sound", " Distant thunder."), ("camera", "push-in")):
+            d = self.read_shots()
+            if field == "camera":
+                d["shots"][1]["motion"]["camera"] = val
+            else:
+                d["shots"][1]["motion"][field] += val
+            before = copy.deepcopy(d)
+            self.write_shots(d)
+            rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", f"只改 {field}")
+            self.assertEqual(rc, 0, err)
+            self.assertIn("⚠ s02 动作说明和英文动作提示词（motion.prompt / sound / camera）要一起改，这次只改了英文提示词", out)
+            self.assertEqual(self.read_shots(), before)
+
+        # 5. reference desc/prompt mismatch -> reminder both ways
+        d = self.read_shots()
+        d["references"]["keeper"]["desc"] += "，戴毛线帽"
+        self.write_shots(d)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "只改参考图说明")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("⚠ 参考图 keeper 说明和英文提示词（prompt）要一起改，这次只改了说明", out)
+
+        d = self.read_shots()
+        d["references"]["keeper"]["prompt"] += ", knitted wool cap"
+        self.write_shots(d)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "只改参考图英文")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("⚠ 参考图 keeper 说明和英文提示词（prompt）要一起改，这次只改了英文提示词", out)
+
+        # 6. Changing both together -> no sync reminder
+        d = self.read_shots()
+        d["shots"][0]["keyframe"]["desc"] += "，多云"
+        d["shots"][0]["keyframe"]["prompt"] += ", overcast sky"
+        d["shots"][0]["motion"]["desc"] += "，云缓缓飘过"
+        d["shots"][0]["motion"]["prompt"] += " Clouds drift slowly."
+        self.write_shots(d)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "中英文一起改")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("要一起改", out)
+
+    def test_desc_versioning_diff_labels_and_picks_unaffected(self) -> None:
+        data = self.read_shots()
+        self.pick_all_assets(data)
+        self.write_shots(data)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "初稿")
+        self.assertEqual(rc, 0, err)
+        v1_sb = film.storyboard(data)
+
+        # Edit only desc on reference and shots
+        data = self.read_shots()
+        data["references"]["keeper"]["desc"] = "设定图：守塔老人，穿深蓝毛衣"
+        data["shots"][1]["keyframe"]["desc"] = "中景：守塔人提灯上楼"
+        data["shots"][1]["motion"]["desc"] = "镜头缓推跟随，脚步声清晰"
+        self.write_shots(data)
+
+        # stale_picks must ignore desc
+        self.assertEqual(film.stale_picks(v1_sb, data), [])
+
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "润色中文说明")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("已存为 v2（润色中文说明）", out)
+        self.assertNotIn("按旧分镜出的", out)
+
+        # diff shows Chinese labels for desc fields
+        rc, out, err = self.run_cli("diff", str(self.vdir), "v1", "v2")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("参考图 keeper 说明：", out)
+        self.assertIn("画面说明：", out)
+        self.assertIn("动作说明：", out)
+
+        # revert to v1 must NOT clear any picks
+        rc, out, err = self.run_cli("revert", str(self.vdir), "v1")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("清掉", out)
+        cur = self.read_shots()
+        self.assertEqual(cur["references"]["keeper"]["image"], "assets/keyframes/ref-keeper/trial/ref.png")
+        for s in cur["shots"]:
+            self.assertTrue(s["keyframe"]["image"])
+            self.assertTrue(s["motion"]["clip"])
+
+    def test_storyboard_md_chinese_first_format(self) -> None:
+        data = self.read_shots()
+        data["shots"][2]["keyframe"].pop("desc", None)
+        data["shots"][2]["motion"].pop("desc", None)
+        data["shots"][2]["line"] = ""
+        self.write_shots(data)
+
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "初稿")
+        self.assertEqual(rc, 0, err)
+        md_text = (self.vdir / "storyboard.md").read_text(encoding="utf-8")
+
+        self.assertIn("| 名字 | 说明 | 提示词 |", md_text)
+        self.assertIn("| # | 时间 | 画面说明 | 动作说明 | 台词 | 转场 |", md_text)
+        self.assertIn("| s03 | 7.5 – 12.5 | （未写） | （未写） | （未写） | cut |", md_text)
+        self.assertIn("## 给模型的提示词", md_text)
+        self.assertIn("### s01", md_text)
+        self.assertIn("### s02", md_text)
+        self.assertIn("### s03", md_text)
+        self.assertIn("- 参考图：`keeper`", md_text)
+        self.assertIn("- 运镜：push-in", md_text)
+        self.assertIn("- 声音：Gentle waves", md_text)
+
+
+class TestStoryboardHtml(FilmVersionTestBase):
+    def _extract_shot_card(self, html_text: str, sid: str) -> str:
+        m = re.search(rf'<article\b[^>]*data-shot="{re.escape(sid)}"[^>]*>.*?</article>', html_text, re.DOTALL)
+        self.assertIsNotNone(m, f"missing card for {sid}")
+        assert m is not None
+        return m.group(0)
+
+    def test_html_generation_v1_escaping_security_and_template_skip(self) -> None:
+        # Inject HTML tags into line to verify escaping
+        data = self.read_shots()
+        data["shots"][0]["line"] = "<b>x</b> & <i>y</i>"
+        self.write_shots(data)
+
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "初稿")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("分镜页面：assets/review/storyboard.html", out)
+
+        html_path = self.vdir / "assets" / "review" / "storyboard.html"
+        self.assertTrue(html_path.is_file())
+        page = html_path.read_text(encoding="utf-8")
+
+        # v1 shows 初稿 and no changed/new highlights on shot cards
+        self.assertIn(">初稿<", page)
+        for sid in ("s01", "s02", "s03"):
+            card = self._extract_shot_card(page, sid)
+            self.assertNotIn("本版改动", card)
+            self.assertNotIn("changed", card)
+            self.assertNotIn("badge new", card)
+
+        # Escaping
+        self.assertIn("&lt;b&gt;x&lt;/b&gt; &amp; &lt;i&gt;y&lt;/i&gt;", page)
+        self.assertNotIn("<b>x</b>", page)
+
+        # Self-contained: no http/https, no absolute local paths
+        self.assertNotIn("http://", page)
+        self.assertNotIn("https://", page)
+        self.assertNotIn(str(self.root), page)
+        self.assertNotIn(str(self.root.resolve()), page)
+        self.assertNotIn("/Volumes/", page)
+        self.assertNotIn("/Users/", page)
+
+        # Unpicked placeholders
+        self.assertIn("还没出图", page)
+        self.assertIn("关键帧：未选", page)
+        self.assertIn("视频：未选", page)
+
+        # Template dir must NOT create storyboard.html or assets/
+        fake_repo = self.root / "fake-repo"
+        tpl_dir = fake_repo / "templates" / "ai-film-base"
+        (tpl_dir / "prompts").mkdir(parents=True)
+        shutil.copy2(TEMPLATE_SHOTS, tpl_dir / "prompts" / "shots.json")
+        with mock.patch.object(film, "REPO", fake_repo):
+            rc, out, err = self.run_cli("plan", str(tpl_dir), "--write")
+            self.assertEqual(rc, 0, err)
+            self.assertNotIn("分镜页面：", out)
+            self.assertFalse((tpl_dir / "assets").exists())
+
+    def test_html_highlights_add_delete_global_and_revert(self) -> None:
+        self.run_cli("plan", str(self.vdir), "--write", "-m", "初稿")
+
+        # v2: modify s02 keyframe.desc & keyframe.prompt, add s04, delete s03, change video_style
+        data = self.read_shots()
+        data["video_style"] = data["video_style"].replace("warm amber", "cool silver")
+        data["shots"][1]["keyframe"]["desc"] = "中景：守塔人提着红灯上楼"
+        data["shots"][1]["keyframe"]["prompt"] = data["shots"][1]["keyframe"]["prompt"].replace("brass oil lantern", "red lantern")
+        s04 = copy.deepcopy(data["shots"][2])
+        s04["id"] = "s04"
+        s04["keyframe"]["desc"] = "海面日出远景"
+        data["shots"] = [data["shots"][0], data["shots"][1], s04]
+        self.write_shots(data)
+
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "改 s02、增 s04、删 s03")
+        self.assertEqual(rc, 0, err)
+        page = (self.vdir / "assets" / "review" / "storyboard.html").read_text(encoding="utf-8")
+
+        self.assertIn("本版改动（相对 v1）：视频风格", page)
+        self.assertIn("本版删除：s03", page)
+
+        card_s01 = self._extract_shot_card(page, "s01")
+        card_s02 = self._extract_shot_card(page, "s02")
+        card_s04 = self._extract_shot_card(page, "s04")
+
+        self.assertNotIn("本版改动", card_s01)
+        self.assertNotIn("changed", card_s01)
+
+        self.assertIn("本版改动：画面说明、画面", card_s02)
+        self.assertIn('class="field changed" data-field="keyframe.desc"', card_s02)
+        self.assertIn("给模型的提示词（本版有改动）", card_s02)
+        self.assertIn('class="prompt-row changed" data-field="keyframe.prompt"', card_s02)
+        self.assertIn('class="field" data-field="motion.desc"', card_s02)
+
+        self.assertIn('class="badge new">新增<', card_s04)
+
+        # revert v1 also regenerates storyboard.html
+        rc, out, err = self.run_cli("revert", str(self.vdir), "v1")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("分镜页面：assets/review/storyboard.html", out)
+        page_rev = (self.vdir / "assets" / "review" / "storyboard.html").read_text(encoding="utf-8")
+        self.assertIn("v3 · ", page_rev)
+        self.assertIn("本版删除：s04", page_rev)
+        self.assertIn('class="badge new">新增<', self._extract_shot_card(page_rev, "s03"))
+
+        # Reordering shots is reported in the header banner
+        data = self.read_shots()
+        data["shots"] = [data["shots"][1], data["shots"][0], data["shots"][2]]
+        self.write_shots(data)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write", "-m", "调换顺序")
+        self.assertEqual(rc, 0, err)
+        page_order = (self.vdir / "assets" / "review" / "storyboard.html").read_text(encoding="utf-8")
+        self.assertIn("顺序变了（s01 s02 s03 → s02 s01 s03）", page_order)
+
+    def test_html_thumbnail_missing_and_unreadable_do_not_crash(self) -> None:
+        # 1. Missing image file on disk (called directly via write_storyboard_html)
+        data = self.read_shots()
+        data["shots"][0]["keyframe"]["image"] = "assets/keyframes/s01/trial/gone.png"
+        out_path = film.write_storyboard_html(self.vdir, data)
+        page = out_path.read_text(encoding="utf-8")
+        card_s01 = self._extract_shot_card(page, "s01")
+        card_s02 = self._extract_shot_card(page, "s02")
+        self.assertIn("图片读不到", card_s01)
+        self.assertIn("试稿", card_s01)
+        self.assertIn("还没出图", card_s02)
+
+        # 2. Corrupt/empty image file via plan --write -> 图片读不到, no crash
+        data = self.read_shots()
+        data["shots"][0]["keyframe"]["image"] = self.touch_asset("assets/keyframes/s01/final/empty.png")
+        data["shots"][0]["motion"]["clip"] = self.touch_asset("assets/clips/s01/placeholder-01.mp4")
+        self.write_shots(data)
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write")
+        self.assertEqual(rc, 0, err)
+        page = (self.vdir / "assets" / "review" / "storyboard.html").read_text(encoding="utf-8")
+        card_s01 = self._extract_shot_card(page, "s01")
+        self.assertIn("图片读不到", card_s01)
+        self.assertIn("关键帧：定稿", card_s01)
+        self.assertIn("视频：占位", card_s01)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
+    def test_html_embeds_base64_jpeg_thumbnail_from_real_png(self) -> None:
+        ref_png = self.vdir / "assets/keyframes/ref-keeper/trial/keeper.png"
+        s01_png = self.vdir / "assets/keyframes/s01/trial/s01.png"
+        for p, color in ((ref_png, "navy"), (s01_png, "teal")):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c={color}:s=1920x1080:d=0.1",
+                 "-frames:v", "1", str(p)],
+                check=True,
+            )
+        rc, _, err = self.run_cli("pick", str(self.vdir), "ref:keeper", str(ref_png))
+        self.assertEqual(rc, 0, err)
+        rc, _, err = self.run_cli("pick", str(self.vdir), "s01", str(s01_png))
+        self.assertEqual(rc, 0, err)
+
+        rc, out, err = self.run_cli("plan", str(self.vdir), "--write")
+        self.assertEqual(rc, 0, err)
+        page = (self.vdir / "assets" / "review" / "storyboard.html").read_text(encoding="utf-8")
+        self.assertIn('src="data:image/jpeg;base64,', page)
+        card_s01 = self._extract_shot_card(page, "s01")
+        self.assertIn('src="data:image/jpeg;base64,', card_s01)
+        self.assertNotIn("图片读不到", card_s01)
+        self.assertNotIn("还没出图", card_s01)
+        # s02 still unpicked
+        self.assertIn("还没出图", self._extract_shot_card(page, "s02"))
+        self.assertNotIn(str(self.root), page)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@
   "video_style": "Live-action, cinematic, 35mm film look, soft natural light, muted teal and warm amber palette",
   "references": {
     "keeper": {
+      "desc": "设定图：七十多岁的守塔人，白色短胡子，饱经风霜但和善的脸，藏青色毛衣、深色帆布裤、旧皮靴；正面和四分之三侧面并排，暖灰色纯背景",
       "prompt": "Character reference sheet of one elderly lighthouse keeper in his seventies, short white beard, weathered kind face, navy wool sweater, dark canvas trousers, worn leather boots. The same man shown twice side by side, front view and three-quarter view, full body, standing on a plain warm grey studio background, even soft lighting",
       "image": null
     }
@@ -23,12 +24,14 @@
       "duration": 4,
       "transition": "fade",
       "keyframe": {
+        "desc": "远景定场：黎明前的蓝色时刻，礁石岬角上一座白色小灯塔，海面平静发暗，天边一线暖光；塔灯还没亮，只有塔底一扇窗亮着",
         "prompt": "Wide establishing shot of a small white lighthouse on a rocky headland at blue hour just before dawn, calm dark sea, a faint warm glow on the horizon, the lighthouse lamp still off, one lit window at its base",
         "refs": [],
         "image": null
       },
       "motion": {
         "camera": "push-in",
+        "desc": "镜头缓缓推近灯塔，海浪轻拍礁石，天边慢慢变亮。声音：海浪、低沉的海风、远处一声海鸥",
         "prompt": "the small white lighthouse shown in <Picture 1> stands on the rocky headland at blue hour, keeping its shape, the dark sea and the single lit window at its base. The camera pushes in with small amplitude at slow speed toward the lighthouse as gentle waves roll against the rocks and the warm glow on the horizon slowly brightens.",
         "sound": "Gentle waves wash over the rocks under a low, steady sea wind. A distant gull calls once."
       },
@@ -40,6 +43,7 @@
       "duration": 4,
       "transition": "cut",
       "keyframe": {
+        "desc": "中景，灯塔内部：守塔人（参考图 keeper）提着铜油灯爬窄窄的螺旋铁楼梯，灯光从下往上照亮他的脸，身后小圆窗透进冷蓝色的光",
         "prompt": "Medium shot inside the lighthouse: the old keeper from <Picture 1> climbs a narrow spiral iron staircase, holding a brass oil lantern that lights his face from below, cool blue light from a small round window behind him",
         "refs": [
           "keeper"
@@ -48,6 +52,7 @@
       },
       "motion": {
         "camera": "tilt-up",
+        "desc": "镜头跟着他慢慢上摇，油灯轻轻摇晃，暖光扫过弧形石墙。声音：铁台阶上缓慢的脚步声、油灯提手轻响、窗外微弱的风声",
         "prompt": "the old lighthouse keeper shown in <Picture 1> keeps his white beard, navy wool sweater and the brass oil lantern in his hand as he climbs the narrow spiral iron staircase. The camera tilts up at slow speed, following him; the lantern sways slightly and its warm light slides across the curved stone wall.",
         "sound": "Slow footsteps ring on the iron steps and the lantern handle creaks softly. A faint wind hums outside the small round window."
       },
@@ -59,12 +64,14 @@
       "duration": 5,
       "transition": "cut",
       "keyframe": {
+        "desc": "特写：巨大的玻璃菲涅尔透镜从内部亮起琥珀色暖光，一圈圈棱纹反着光，透过灯室玻璃能看到第一缕日出",
         "prompt": "Close-up of a huge glass Fresnel lighthouse lens beginning to glow warm amber from inside, its ribbed rings catching the light, the first sliver of sunrise visible on the horizon through the lantern-room windows",
         "refs": [],
         "image": null
       },
       "motion": {
         "camera": "pull-out",
+        "desc": "镜头从透镜慢慢拉远，光越来越亮，身后的日出越来越宽。声音：灯点亮时低沉的电流嗡声、风压在灯室玻璃上",
         "prompt": "the huge glass Fresnel lens shown in <Picture 1> glows warm amber from inside, its ribbed rings catching the light. The camera pulls out with small amplitude at slow speed as the glow grows brighter and the first sliver of sunrise widens on the horizon behind the lantern-room windows.",
         "sound": "A low electric hum rises as the lamp warms up, with soft wind pressing against the lantern-room glass."
       },

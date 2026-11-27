@@ -22,7 +22,7 @@ description: 导演一条 AI 生成的片子（剧本 → 分镜 → 参考图 /
 F=scripts/ai/film.py; V=videos/00N-name
 rsync -a templates/ai-film-base/ $V/                 # 0. 新片
 # 1. 写 brief.md；写 prompts/shots.json（见下文「写镜头清单」）
-python3 $F plan $V --write -m "初稿"                  # 2. 校验 + 存 v1 + 生成 storyboard.md → 给用户确认
+python3 $F plan $V --write -m "初稿"                  # 2. 校验 + 存 v1 + 生成 storyboard.md 和分镜页面 → 给用户看
 python3 $F keyframes $V                              # 3. dry run：关键帧试稿计划和预算 → 用户确认
 python3 $F keyframes $V --yes --keep-vm              #    试稿（4 MP，每镜 2 张；参考图先出）
 python3 $F review $V --what keyframes                # 4. 审图（逐张看 assets/review/*.png）
@@ -62,6 +62,7 @@ python3 $F check $V                                  # 10. 自检，然后逐张
 - **少用 AI 不擅长的**：画面里的文字、复杂手部动作、多人互动、细小的机械结构。必须出现的文字用英文引号括起来。
 - `style` 写关键帧统一的质感、光线和色调，会自动接在每条关键帧提示词后面；`video_style` 是给视频模型的同一套风格（「Live-action, cinematic, …」这种开头，不要写 film still）。
 - `format.fps` 用 24：h3 视频是 24 fps，30 fps 会重复帧，运镜时顿挫。
+- **中文说明必填**：每镜必须写 `keyframe.desc`（画面说明）和 `motion.desc`（动作说明），每个参考图写 `desc`。中文说明只给用户看，绝不发给模型；英文提示词给模型。用户点名改哪里时，中文说明和英文提示词要一起改。
 - 台词写在 `line`，只做字幕（第一版不配音）；`plan` 会提醒读不完的台词。
 
 ### 关键帧提示词（keyframe.prompt，h3 出图）
@@ -92,7 +93,8 @@ non_diegetic_music: N/A
 ## 改分镜（版本）
 
 - 用户点名要改某个镜头和栏目（画面、动作、声音、台词、时长、转场、运镜）时，只改 `prompts/shots.json` 里对应的字段，其他镜头和字段不动。
-- 改完**马上**运行 `python3 $F plan $V --write -m "一句说明"` 存新版并重写 `storyboard.md`，再运行 `python3 $F diff $V vN-1 vN` 把改动给用户看。如果 `plan --write` 打印了 ⚠ 过期选片提醒，告诉用户哪些已选的图 / 视频已经对不上新分镜。提醒是拿上一版比的：改了分镜不存版就去出图、选图，之后再存版，新选的图也会被误报。
+- 改完**马上**运行 `python3 $F plan $V --write -m "一句说明"` 存新版并重写 `storyboard.md` 和分镜页面，再运行 `python3 $F diff $V vN-1 vN` 把改动给用户看。每次 `plan --write` 之后，把 `assets/review/storyboard.html` 显示给用户（在 T3 Code 里用 `html_preview` / `html_render` 打开这个文件；其他环境给文件路径），连同 diff 一起。如果 `plan --write` 打印了 ⚠ 过期选片提醒，告诉用户哪些已选的图 / 视频已经对不上新分镜。提醒是拿上一版比的：改了分镜不存版就去出图、选图，之后再存版，新选的图也会被误报。
+- 选好图之后再跑一次 `python3 $F plan $V --write` 刷新分镜页面上的缩略图（分镜没变就不会存新版）。
 - 查看版本历史用 `python3 $F versions $V`；查看工作区未保存的改动用 `python3 $F diff $V`。
 - 需要回退时用 `revert`（版本只增不改，回退本身也会存成新版；工作区有未保存改动时会先自动存一版「回退前自动保存」，所以退错还能再退回来）：
   - 整版回退：`python3 $F revert $V v2`（可选 `-m "说明"`）
