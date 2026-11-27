@@ -1,0 +1,188 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    /*
+     * Classes, not ids: this file is mounted several times on one page, and the
+     * runtime scopes every selector and the timeline key to each mount.
+     */
+    /* left column: number / name / tools / one line */
+    .sec-col {
+      position: absolute;
+      left: 192px;
+      top: 0;
+      bottom: 0;
+      width: 740px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .sec-num {
+      font: 700 34px/1 var(--font-mono);
+      color: var(--accent);
+      letter-spacing: 0.08em;
+      margin-bottom: 30px;
+    }
+    .sec-name {
+      font: 700 104px/1.1 var(--font-sans);
+      color: var(--ink);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      margin-bottom: 30px;
+    }
+    .sec-tools {
+      font: 400 40px/1.3 var(--font-mono);
+      color: var(--accent);
+      margin-bottom: 22px;
+    }
+    .sec-desc {
+      font: 400 36px/1.45 var(--font-sans);
+      color: var(--muted);
+    }
+    /* right column: x 1000-1728, y 300-780; an image card, or empty for a graphic scene */
+    .sec-g {
+      position: absolute;
+      left: 1000px;
+      top: 300px;
+      width: 728px;
+      height: 480px;
+    }
+    .sec-gi {
+      position: absolute;
+      inset: 0;
+    }
+    .sec-frame {
+      position: absolute;
+      left: 0;
+      top: 35px;
+      width: 728px;
+      height: 410px;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 2px solid var(--line);
+      background: var(--panel);
+    }
+    .sec-img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  </style>
+  <!--
+    Left text, right image. Mount once per section with data-variable-values:
+      num, name, tools, desc   the four text lines
+      accent                   colour of the number and tools line
+      image                    "assets/....png|jpg|svg" for an image card; "" leaves the right
+                               column empty for a graphic scene mounted over it (graphic-flow.html)
+    The exit is timed from the host's data-duration, so any slot length works (>= 1.5 s).
+  -->
+  <div
+    id="root"
+    data-composition-id="section"
+    data-width="1920"
+    data-height="1080"
+    data-composition-variables='[
+      {"id":"num","type":"string","label":"Number","default":"01"},
+      {"id":"name","type":"string","label":"Name","default":"段落标题"},
+      {"id":"tools","type":"string","label":"Tools","default":"工具 / 关键词"},
+      {"id":"desc","type":"string","label":"One line","default":"一行说明，七八个词以内"},
+      {"id":"accent","type":"color","label":"Accent","default":"#d97757"},
+      {"id":"image","type":"string","label":"Image (assets/…, empty for none)","default":""}
+    ]'
+  >
+    <div class="sec-col">
+      <div class="sec-num" data-var-text="num">01</div>
+      <h2 class="sec-name" data-var-text="name">段落标题</h2>
+      <div class="sec-tools" data-var-text="tools">工具 / 关键词</div>
+      <p class="sec-desc" data-var-text="desc">一行说明，七八个词以内</p>
+    </div>
+    <div class="sec-g">
+      <div class="sec-gi">
+        <div class="sec-frame" data-layout-allow-overflow>
+          <img class="sec-img" data-var-src="image" src="assets/section-placeholder.svg" alt="" />
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const vars = window.__hyperframes.getVariables();
+
+      // Slot length = this mount's host data-duration (the scoped query finds the host first).
+      const host = document.querySelector("[data-duration]");
+      let slot = host ? parseFloat(host.getAttribute("data-duration")) : NaN;
+      if (!(slot > 0)) {
+        slot = 3;
+        console.error("[section] could not read the host's data-duration; exit placed for a 3 s slot");
+      }
+      const exitAt = Math.max(0.6, slot - 0.17);
+
+      // No image: drop the card so a graphic scene can sit in the right column.
+      const frame = document.querySelector(".sec-frame");
+      if (!vars.image && frame) frame.remove();
+
+      // Long names shrink to fit the 740 px column on one line (104 px down to 64 px);
+      // past that (about 11+ CJK characters) they wrap onto two lines at 72 px.
+      // Keep names to ~20 characters.
+      const nameEl = document.querySelector(".sec-name");
+      const fit = window.__hyperframes.fitTextFontSize;
+      if (nameEl && typeof fit === "function") {
+        const cs = window.getComputedStyle(nameEl);
+        const { fontSize, fits } = fit(String(vars.name || nameEl.textContent), {
+          fontFamily: cs.fontFamily,
+          fontWeight: cs.fontWeight,
+          maxWidth: 740,
+          baseFontSize: 104,
+          minFontSize: 64,
+          step: 4,
+        });
+        if (fits) {
+          nameEl.style.fontSize = `${fontSize}px`;
+        } else {
+          nameEl.style.fontSize = "72px";
+          nameEl.style.whiteSpace = "normal";
+        }
+      }
+
+      const tl = gsap.timeline({ paused: true });
+      const blurIn = (sel, at, d = 0.22) =>
+        tl.fromTo(
+          sel,
+          { opacity: 0, filter: "blur(8px)" },
+          { opacity: 1, filter: "blur(0px)", duration: d, ease: "power3.out" },
+          at,
+        );
+
+      // Left column: whole-line blur-ins, overlapping.
+      blurIn(".sec-num", 0.02, 0.18);
+      blurIn(".sec-name", 0.05);
+      blurIn(".sec-tools", 0.12, 0.2);
+      blurIn(".sec-desc", 0.14);
+
+      // Right column slides in from the right, sharpening as it lands.
+      tl.fromTo(
+        ".sec-gi",
+        { x: 90, opacity: 0, filter: "blur(12px)" },
+        { x: 0, opacity: 1, filter: "blur(0px)", duration: 0.45, ease: "expo.out" },
+        0.08,
+      );
+      // A still image keeps moving: slow push-in until the exit.
+      if (vars.image) {
+        tl.fromTo(".sec-img", { scale: 1 }, { scale: 1.05, duration: exitAt - 0.3, ease: "none" }, 0.3);
+      }
+
+      // Exit: blur swap, ending just before the slot does.
+      tl.fromTo(
+        [".sec-col", ".sec-g"],
+        { opacity: 1, filter: "blur(0px)" },
+        { opacity: 0, filter: "blur(8px)", duration: 0.15, ease: "power2.in", immediateRender: false },
+        exitAt,
+      );
+
+      window.__timelines["section"] = tl;
+    })();
+  </script>
+</template>

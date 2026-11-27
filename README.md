@@ -30,7 +30,7 @@
 
 | 路径 | 用途 |
 |---|---|
-| [`templates/hyperframes-base/`](templates/hyperframes-base/) | HyperFrames 新片起点：片头 + 片尾两个场景，字体 / 配色变量、brief 和分镜骨架都备好了，001-demo 的坑写在它的 README 里 |
+| [`templates/hyperframes-base/`](templates/hyperframes-base/) | HyperFrames 新片起点：片头 → 「左文右图」段落（一个文件挂多次，右栏放图或叠动画图形）→ 片尾；字体 / 配色变量、brief 和分镜骨架都备好了，001-demo 的坑写在它的 README 里 |
 | [`scripts/hf.sh`](scripts/hf.sh) | 跑 HyperFrames CLI：`cd <工程>/src && ../../../scripts/hf.sh check`。版本在脚本里固定（`HF_CLI_VERSION` 可临时覆盖），不发 `events` / `feedback` |
 | [`scripts/selfcheck.sh`](scripts/selfcheck.sh) | 渲染后自检：ffprobe 核对时长 / 分辨率 / 帧率，整片扫黑帧、空底色帧、静止段，抽帧并拼总览图，报告写进 `renders/frames/selfcheck.txt`。`--help` 看全部选项 |
 

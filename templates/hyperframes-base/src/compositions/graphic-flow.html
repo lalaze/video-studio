@@ -1,0 +1,147 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    /* same box as section.html's right column: x 1000-1728, y 300-780 */
+    .flow-g {
+      position: absolute;
+      left: 1000px;
+      top: 300px;
+      width: 728px;
+      height: 480px;
+    }
+    .flow-gi {
+      position: absolute;
+      inset: 0;
+    }
+    .flow-svg {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 728px;
+      height: 480px;
+      overflow: visible;
+    }
+    .flow-line {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 5;
+      stroke-linecap: round;
+      /* pathLength 1000, not 1: GSAP rounds px values */
+      stroke-dasharray: 1000;
+    }
+    .flow-node {
+      fill: var(--panel);
+      stroke: var(--accent);
+      stroke-width: 5;
+    }
+    .flow-label {
+      position: absolute;
+      top: 300px;
+      width: 220px;
+      text-align: center;
+      font: 400 34px/1.3 var(--font-sans);
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    .flow-l1 { left: 4px; }
+    .flow-l2 { left: 254px; }
+    .flow-l3 { left: 504px; }
+  </style>
+  <!--
+    Example graphic for an empty section right column: three steps joined by a line.
+    Mount it on track 2 with the SAME data-start / data-duration as its section host,
+    and pass the section's accent so the colours match. Copy this file to make other
+    graphics; keep the box, the entrance at 0.08 s and the slot-timed exit.
+  -->
+  <div
+    id="root"
+    data-composition-id="flow"
+    data-width="1920"
+    data-height="1080"
+    data-composition-variables='[
+      {"id":"a","type":"string","label":"Step 1","default":"输入"},
+      {"id":"b","type":"string","label":"Step 2","default":"处理"},
+      {"id":"c","type":"string","label":"Step 3","default":"输出"},
+      {"id":"accent","type":"color","label":"Accent","default":"#6a9bcc"}
+    ]'
+  >
+    <div class="flow-g">
+      <div class="flow-gi">
+        <svg class="flow-svg" viewBox="0 0 728 480" width="728" height="480">
+          <line class="flow-line" x1="114" y1="240" x2="614" y2="240" pathLength="1000" />
+          <circle class="flow-node flow-n1" cx="114" cy="240" r="46" />
+          <circle class="flow-node flow-n2" cx="364" cy="240" r="46" />
+          <circle class="flow-node flow-n3" cx="614" cy="240" r="46" />
+          <circle class="flow-dot" cx="0" cy="0" r="11" fill="#f3efe6" />
+        </svg>
+        <div class="flow-label flow-l1" data-var-text="a">输入</div>
+        <div class="flow-label flow-l2" data-var-text="b">处理</div>
+        <div class="flow-label flow-l3" data-var-text="c">输出</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      // Slot length = this mount's host data-duration (see section.html).
+      const host = document.querySelector("[data-duration]");
+      let slot = host ? parseFloat(host.getAttribute("data-duration")) : NaN;
+      if (!(slot > 0)) {
+        slot = 3;
+        console.error("[flow] could not read the host's data-duration; exit placed for a 3 s slot");
+      }
+      const exitAt = Math.max(1.2, slot - 0.17);
+
+      const tl = gsap.timeline({ paused: true });
+
+      // Lands with the section's right column.
+      tl.fromTo(
+        ".flow-gi",
+        { x: 90, opacity: 0, filter: "blur(12px)" },
+        { x: 0, opacity: 1, filter: "blur(0px)", duration: 0.45, ease: "expo.out" },
+        0.08,
+      );
+
+      // The line draws left to right; each node pops as the line reaches it.
+      tl.fromTo(".flow-line", { strokeDashoffset: 1000 }, { strokeDashoffset: 0, duration: 0.6, ease: "none" }, 0.35);
+      [
+        [".flow-n1", ".flow-l1", 0.3, "114 240"],
+        [".flow-n2", ".flow-l2", 0.62, "364 240"],
+        [".flow-n3", ".flow-l3", 0.92, "614 240"],
+      ].forEach(([node, label, at, origin]) => {
+        tl.fromTo(
+          node,
+          { scale: 0.4, opacity: 0, svgOrigin: origin },
+          { scale: 1, opacity: 1, svgOrigin: origin, duration: 0.3, ease: "expo.out" },
+          at,
+        );
+        tl.fromTo(
+          label,
+          { opacity: 0, filter: "blur(6px)" },
+          { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power3.out" },
+          at + 0.05,
+        );
+      });
+
+      // Then a dot runs through the steps at constant speed until the exit.
+      tl.fromTo(".flow-dot", { opacity: 0, x: 114, y: 240 }, { opacity: 1, duration: 0.12 }, 1.1);
+      tl.fromTo(
+        ".flow-dot",
+        { x: 114 },
+        { x: 614, duration: Math.max(0.3, exitAt - 0.1 - 1.15), ease: "none", immediateRender: false },
+        1.15,
+      );
+
+      tl.fromTo(
+        ".flow-g",
+        { opacity: 1, filter: "blur(0px)" },
+        { opacity: 0, filter: "blur(8px)", duration: 0.15, ease: "power2.in", immediateRender: false },
+        exitAt,
+      );
+
+      window.__timelines["flow"] = tl;
+    })();
+  </script>
+</template>

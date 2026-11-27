@@ -86,7 +86,7 @@
       id="root"
       data-composition-id="main"
       data-start="0"
-      data-duration="5"
+      data-duration="11"
       data-fps="30"
       data-width="1920"
       data-height="1080"
@@ -104,13 +104,57 @@
         data-width="1920"
         data-height="1080"
       ></div>
+      <!--
+        Sections: one file (compositions/section.html) mounted once per section. Every
+        mount keeps data-composition-id="section"; the host id (s1, s2, ...) is unique.
+      -->
+      <div
+        id="s1"
+        class="clip"
+        data-composition-id="section"
+        data-composition-src="compositions/section.html"
+        data-variable-values='{"num":"01","name":"配图段落","tools":"assets/ 里的截图","desc":"右栏一张截图，缓慢推近","accent":"#d97757","image":"assets/section-placeholder.svg"}'
+        data-start="2.5"
+        data-duration="3"
+        data-track-index="1"
+        data-track-kind="graphics"
+        data-width="1920"
+        data-height="1080"
+      ></div>
+      <div
+        id="s2"
+        class="clip"
+        data-composition-id="section"
+        data-composition-src="compositions/section.html"
+        data-variable-values='{"num":"02","name":"图形段落","tools":"图形是单独的场景","desc":"叠在右栏，和段落同进同出","accent":"#6a9bcc","image":""}'
+        data-start="5.5"
+        data-duration="3"
+        data-track-index="1"
+        data-track-kind="graphics"
+        data-width="1920"
+        data-height="1080"
+      ></div>
+      <!-- s2's graphic: track 2, same data-start / data-duration as s2, same accent. -->
+      <div
+        id="g2"
+        class="clip"
+        data-composition-id="flow"
+        data-composition-src="compositions/graphic-flow.html"
+        data-variable-values='{"a":"输入","b":"处理","c":"输出","accent":"#6a9bcc"}'
+        data-start="5.5"
+        data-duration="3"
+        data-track-index="2"
+        data-track-kind="graphics"
+        data-width="1920"
+        data-height="1080"
+      ></div>
       <div
         id="end"
         class="clip"
         data-composition-id="end"
         data-composition-src="compositions/end.html"
         data-variable-values='{"headline":"video-studio","footnote":"用 Claude Code 做视频的工作台"}'
-        data-start="2.5"
+        data-start="8.5"
         data-duration="2.5"
         data-track-index="1"
         data-track-kind="graphics"

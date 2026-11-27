@@ -19,7 +19,7 @@ videos/<三位编号>-<短名>/     例：videos/001-demo/
   prompts/         生成参数：prompt、模型、种子、参考图
   assets/          素材（不进 git）
   renders/         渲染输出（不进 git）
-templates/         可复用模板（hyperframes-base：HyperFrames 新片起点）
+templates/         可复用模板（hyperframes-base：HyperFrames 新片起点，含左文右图段落场景）
 scripts/           通用脚本（hf.sh 跑 HyperFrames CLI、selfcheck.sh 渲染自检；以后加转写、去静音、拼接、字幕…）
 ```
 
