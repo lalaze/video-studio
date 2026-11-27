@@ -20,7 +20,7 @@ videos/<三位编号>-<短名>/     例：videos/001-demo/
   assets/          素材（不进 git）
   renders/         渲染输出（不进 git）
 templates/         可复用模板（hyperframes-base：HyperFrames 新片起点，含左文右图段落场景；ai-film-base：AI 生成片起点）
-scripts/           通用脚本（hf.sh 跑 HyperFrames CLI、selfcheck.sh 渲染自检、ai/film.py AI 片导演工具；以后加转写、去静音、拼接、字幕…）
+scripts/           通用脚本（hf.sh 跑 HyperFrames CLI、selfcheck.sh 渲染自检、ai/film.py AI 片导演工具、library.py 片库总览；以后加转写、去静音、拼接、字幕…）
 ```
 
 ## 规则
@@ -32,4 +32,5 @@ scripts/           通用脚本（hf.sh 跑 HyperFrames CLI、selfcheck.sh 渲�
 - 第三方 skill 装进 `.claude/skills/` 前先读一遍代码，并在 README 记录来源和版本。
 - AI 生成片从 `templates/ai-film-base/` 复制，按 skill `ai-director` 走（`scripts/ai/film.py`）。`h3` 开机、视频模型这类付费步骤先跑 dry run 报预算，用户确认后才加 `--yes`。
 - HyperFrames 新片从 `templates/hyperframes-base/` 复制（`rsync -a --exclude .hyperframes`），先读它的 README；CLI 一律用 `scripts/hf.sh`。
+- 用户要看片库 / 所有片子的进度时：运行 `python3 scripts/library.py`，把生成的 `videos/index.html` 显示给用户（T3 Code 里用 html_preview / html_render）。
 - 每次渲染完自检：运行 `scripts/selfcheck.sh <成片> --project <src>`（ffprobe 核对时长、分辨率、帧率，扫黑帧 / 空帧 / 静止段，抽帧到 `renders/frames/`），然后逐张亲眼看抽帧（文字溢出、重叠、乱码、黑帧、动画提前结束）。

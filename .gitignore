@@ -9,6 +9,7 @@ node_modules/
 
 # media: kept out of git
 videos/*/assets/
+videos/index.html
 **/renders/
 *.mp4
 *.mov
