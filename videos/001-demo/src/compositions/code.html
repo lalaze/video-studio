@@ -1,0 +1,164 @@
+<template>
+  <link rel="stylesheet" href="assets/theme.css" />
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      --accent: var(--c1);
+    }
+    #code-card {
+      position: absolute;
+      left: 64px;
+      top: 20px;
+      width: 600px;
+      height: 330px;
+      border-radius: 18px;
+      background: var(--panel);
+      border: 2px solid var(--line);
+    }
+    .code-dot {
+      position: absolute;
+      top: 22px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      opacity: 0.85;
+    }
+    #code-dot1 { left: 24px; background: var(--c1); }
+    #code-dot2 { left: 48px; background: #e3b061; }
+    #code-dot3 { left: 72px; background: var(--c4); }
+    .code-line {
+      position: absolute;
+      height: 16px;
+      border-radius: 8px;
+      transform-origin: left center;
+    }
+    #code-l1 { left: 36px; top: 76px; width: 240px; background: var(--c1); }
+    #code-l2 { left: 76px; top: 120px; width: 330px; background: #57534c; }
+    #code-l3 { left: 76px; top: 164px; width: 280px; background: var(--c2); }
+    #code-l4 { left: 116px; top: 208px; width: 200px; background: var(--c4); }
+    #code-l5 { left: 36px; top: 252px; width: 140px; background: var(--c1); }
+    .code-frame {
+      position: absolute;
+      top: 364px;
+      width: 40px;
+      height: 24px;
+      border-radius: 5px;
+      background: var(--line);
+    }
+    #code-track,
+    #code-progress {
+      position: absolute;
+      left: 64px;
+      top: 404px;
+      width: 600px;
+      height: 8px;
+      border-radius: 4px;
+    }
+    #code-track { background: var(--line); }
+    #code-progress {
+      background: var(--c1);
+      transform-origin: left center;
+    }
+    #code-head {
+      position: absolute;
+      left: 62px;
+      top: 356px;
+      width: 4px;
+      height: 64px;
+      border-radius: 2px;
+      background: var(--ink);
+    }
+  </style>
+  <div id="root" data-composition-id="code" data-width="1920" data-height="1080">
+    <div id="code-col" class="col">
+      <div id="code-num" class="num">01</div>
+      <h2 id="code-name" class="name">代码动画</h2>
+      <div id="code-tools" class="tools">HyperFrames / Remotion</div>
+      <p id="code-desc" class="desc">写 HTML 或 React，逐帧渲染</p>
+    </div>
+    <div id="code-g" class="graphic">
+      <div id="code-gi" style="position: absolute; inset: 0">
+        <div id="code-card">
+          <div id="code-dot1" class="code-dot"></div>
+          <div id="code-dot2" class="code-dot"></div>
+          <div id="code-dot3" class="code-dot"></div>
+          <div id="code-l1" class="code-line"></div>
+          <div id="code-l2" class="code-line"></div>
+          <div id="code-l3" class="code-line"></div>
+          <div id="code-l4" class="code-line"></div>
+          <div id="code-l5" class="code-line"></div>
+        </div>
+        <div id="code-k0" class="code-frame" style="left: 74px"></div>
+        <div id="code-k1" class="code-frame" style="left: 134px"></div>
+        <div id="code-k2" class="code-frame" style="left: 194px"></div>
+        <div id="code-k3" class="code-frame" style="left: 254px"></div>
+        <div id="code-k4" class="code-frame" style="left: 314px"></div>
+        <div id="code-k5" class="code-frame" style="left: 374px"></div>
+        <div id="code-k6" class="code-frame" style="left: 434px"></div>
+        <div id="code-k7" class="code-frame" style="left: 494px"></div>
+        <div id="code-k8" class="code-frame" style="left: 554px"></div>
+        <div id="code-k9" class="code-frame" style="left: 614px"></div>
+        <div id="code-track"></div>
+        <div id="code-progress"></div>
+        <div id="code-head"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      const blurIn = (sel, at, d = 0.22) =>
+        tl.fromTo(
+          sel,
+          { opacity: 0, filter: "blur(8px)" },
+          { opacity: 1, filter: "blur(0px)", duration: d, ease: "power3.out" },
+          at,
+        );
+
+      // Left column: whole-line blur-ins, overlapping.
+      blurIn("#code-num", 0.02, 0.18);
+      blurIn("#code-name", 0.05);
+      blurIn("#code-tools", 0.12, 0.2);
+      blurIn("#code-desc", 0.14);
+
+      // Graphic slides in from the right, sharpening as it lands.
+      tl.fromTo(
+        "#code-gi",
+        { x: 90, opacity: 0, filter: "blur(12px)" },
+        { x: 0, opacity: 1, filter: "blur(0px)", duration: 0.45, ease: "expo.out" },
+        0.08,
+      );
+
+      // Code "types" in, line by line.
+      ["#code-l1", "#code-l2", "#code-l3", "#code-l4", "#code-l5"].forEach((sel, i) => {
+        tl.fromTo(sel, { scaleX: 0 }, { scaleX: 1, duration: 0.3, ease: "power3.out" }, 0.22 + i * 0.09);
+      });
+
+      // Render: the playhead sweeps at constant speed; each frame lights as it passes.
+      const sweepStart = 0.9;
+      const sweep = 1.35;
+      tl.fromTo("#code-head", { x: 0 }, { x: 600, duration: sweep, ease: "none" }, sweepStart);
+      tl.fromTo("#code-progress", { scaleX: 0 }, { scaleX: 1, duration: sweep, ease: "none" }, sweepStart);
+      for (let k = 0; k < 10; k += 1) {
+        const centre = 10 + k * 60 + 20; // px from the track start
+        tl.fromTo(
+          `#code-k${k}`,
+          { backgroundColor: "#34322e" },
+          { backgroundColor: "#d97757", duration: 0.1, ease: "power1.out" },
+          sweepStart + (centre / 600) * sweep,
+        );
+      }
+
+      // Exit: blur swap.
+      tl.fromTo(
+        ["#code-col", "#code-g"],
+        { opacity: 1, filter: "blur(0px)" },
+        { opacity: 0, filter: "blur(8px)", duration: 0.15, ease: "power2.in", immediateRender: false },
+        2.33,
+      );
+
+      window.__timelines["code"] = tl;
+    })();
+  </script>
+</template>

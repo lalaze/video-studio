@@ -1,0 +1,157 @@
+<template>
+  <link rel="stylesheet" href="assets/theme.css" />
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      --accent: var(--c4);
+    }
+    #manim-svg {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 728px;
+      height: 480px;
+      overflow: visible;
+    }
+    .manim-axis {
+      fill: none;
+      stroke: #6b665e;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 1000;
+    }
+    #manim-curve {
+      fill: none;
+      stroke: var(--c4);
+      stroke-width: 6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 1000;
+    }
+    .manim-tick {
+      stroke: #6b665e;
+      stroke-width: 3;
+      stroke-linecap: round;
+    }
+    .manim-label {
+      position: absolute;
+      font: 400 30px/1 var(--font-mono);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    /* placed where the curve is not: π below-left of its tick, 2π above-right */
+    #manim-pi { left: 352px; top: 268px; }
+    #manim-2pi { left: 646px; top: 204px; }
+    #manim-eq {
+      position: absolute;
+      left: 456px;
+      top: 84px;
+      font: 400 36px/1 var(--font-mono);
+      color: var(--c4);
+      white-space: nowrap;
+    }
+  </style>
+  <div id="root" data-composition-id="manim" data-width="1920" data-height="1080">
+    <div id="manim-col" class="col">
+      <div id="manim-num" class="num">04</div>
+      <h2 id="manim-name" class="name">讲解动画</h2>
+      <div id="manim-tools" class="tools">Manim</div>
+      <p id="manim-desc" class="desc">把数学和算法一步步画出来</p>
+    </div>
+    <div id="manim-g" class="graphic">
+      <div id="manim-gi" style="position: absolute; inset: 0">
+        <svg id="manim-svg" viewBox="0 0 728 480" width="728" height="480">
+          <line id="manim-x" class="manim-axis" x1="70" y1="250" x2="690" y2="250" pathLength="1000" />
+          <line id="manim-y" class="manim-axis" x1="100" y1="430" x2="100" y2="70" pathLength="1000" />
+          <g id="manim-ticks">
+            <line class="manim-tick" x1="240" y1="242" x2="240" y2="258" />
+            <line class="manim-tick" x1="380" y1="242" x2="380" y2="258" />
+            <line class="manim-tick" x1="520" y1="242" x2="520" y2="258" />
+            <line class="manim-tick" x1="660" y1="242" x2="660" y2="258" />
+          </g>
+          <!-- y = 250 - 150 sin(2π (x - 100) / 560), x = 100..660, 81 samples -->
+          <path
+            id="manim-curve"
+            pathLength="1000"
+            d="M100.0 250.0 L107.0 238.2 L114.0 226.5 L121.0 215.0 L128.0 203.6 L135.0 192.6 L142.0 181.9 L149.0 171.6 L156.0 161.8 L163.0 152.6 L170.0 143.9 L177.0 135.9 L184.0 128.6 L191.0 122.1 L198.0 116.3 L205.0 111.4 L212.0 107.3 L219.0 104.1 L226.0 101.8 L233.0 100.5 L240.0 100.0 L247.0 100.5 L254.0 101.8 L261.0 104.1 L268.0 107.3 L275.0 111.4 L282.0 116.3 L289.0 122.1 L296.0 128.6 L303.0 135.9 L310.0 143.9 L317.0 152.6 L324.0 161.8 L331.0 171.6 L338.0 181.9 L345.0 192.6 L352.0 203.6 L359.0 215.0 L366.0 226.5 L373.0 238.2 L380.0 250.0 L387.0 261.8 L394.0 273.5 L401.0 285.0 L408.0 296.4 L415.0 307.4 L422.0 318.1 L429.0 328.4 L436.0 338.2 L443.0 347.4 L450.0 356.1 L457.0 364.1 L464.0 371.4 L471.0 377.9 L478.0 383.7 L485.0 388.6 L492.0 392.7 L499.0 395.9 L506.0 398.2 L513.0 399.5 L520.0 400.0 L527.0 399.5 L534.0 398.2 L541.0 395.9 L548.0 392.7 L555.0 388.6 L562.0 383.7 L569.0 377.9 L576.0 371.4 L583.0 364.1 L590.0 356.1 L597.0 347.4 L604.0 338.2 L611.0 328.4 L618.0 318.1 L625.0 307.4 L632.0 296.4 L639.0 285.0 L646.0 273.5 L653.0 261.8 L660.0 250.0"
+          />
+          <g id="manim-dot">
+            <circle cx="0" cy="0" r="20" fill="rgba(125,179,125,0.25)" />
+            <circle cx="0" cy="0" r="11" fill="#f3efe6" stroke="#7db37d" stroke-width="4" />
+          </g>
+        </svg>
+        <div id="manim-pi" class="manim-label">π</div>
+        <div id="manim-2pi" class="manim-label">2π</div>
+        <div id="manim-eq">y = sin x</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      const blurIn = (sel, at, d = 0.22) =>
+        tl.fromTo(
+          sel,
+          { opacity: 0, filter: "blur(8px)" },
+          { opacity: 1, filter: "blur(0px)", duration: d, ease: "power3.out" },
+          at,
+        );
+
+      blurIn("#manim-num", 0.02, 0.18);
+      blurIn("#manim-name", 0.05);
+      blurIn("#manim-tools", 0.12, 0.2);
+      blurIn("#manim-desc", 0.14);
+
+      tl.fromTo(
+        "#manim-gi",
+        { x: 90, opacity: 0, filter: "blur(12px)" },
+        { x: 0, opacity: 1, filter: "blur(0px)", duration: 0.45, ease: "expo.out" },
+        0.08,
+      );
+
+      // Axes first, then the ticks and their labels.
+      tl.fromTo("#manim-x", { strokeDashoffset: 1000 }, { strokeDashoffset: 0, duration: 0.4, ease: "power2.inOut" }, 0.06);
+      tl.fromTo("#manim-y", { strokeDashoffset: 1000 }, { strokeDashoffset: 0, duration: 0.4, ease: "power2.inOut" }, 0.12);
+      tl.fromTo(
+        ["#manim-ticks", "#manim-pi", "#manim-2pi"],
+        { opacity: 0 },
+        { opacity: 1, duration: 0.2, ease: "power1.out" },
+        0.4,
+      );
+
+      // The curve is drawn left to right, then the formula names it.
+      tl.fromTo("#manim-curve", { strokeDashoffset: 1000 }, { strokeDashoffset: 0, duration: 0.85, ease: "power1.inOut" }, 0.45);
+      blurIn("#manim-eq", 1.0, 0.2);
+
+      // A dot walks one period along the finished curve, at constant speed in x.
+      const steps = 40;
+      const walk = 0.95;
+      const point = (s) => ({
+        x: 100 + (560 * s) / steps,
+        y: 250 - 150 * Math.sin((2 * Math.PI * s) / steps),
+      });
+      tl.fromTo("#manim-dot", { opacity: 0, scale: 0.4, x: 100, y: 250 }, { opacity: 1, scale: 1, duration: 0.18, ease: "expo.out" }, 1.25);
+      tl.to(
+        "#manim-dot",
+        {
+          keyframes: Array.from({ length: steps }, (_, i) => ({
+            ...point(i + 1),
+            duration: walk / steps,
+            ease: "none",
+          })),
+        },
+        1.33,
+      );
+
+      tl.fromTo(
+        ["#manim-col", "#manim-g"],
+        { opacity: 1, filter: "blur(0px)" },
+        { opacity: 0, filter: "blur(8px)", duration: 0.15, ease: "power2.in", immediateRender: false },
+        2.33,
+      );
+
+      window.__timelines["manim"] = tl;
+    })();
+  </script>
+</template>

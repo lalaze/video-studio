@@ -17,3 +17,6 @@ videos/*/assets/
 *.wav
 *.mp3
 *.m4a
+
+# HyperFrames local state (snapshots, check reports, project history)
+.hyperframes/

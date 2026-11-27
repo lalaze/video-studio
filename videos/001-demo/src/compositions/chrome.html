@@ -1,0 +1,126 @@
+<template>
+  <link rel="stylesheet" href="assets/theme.css" />
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    #chrome-label {
+      position: absolute;
+      left: 192px;
+      top: 112px;
+      font: 400 30px/40px var(--font-sans);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    #chrome-count {
+      position: absolute;
+      right: 546px;
+      top: 112px;
+      font: 400 30px/40px var(--font-mono);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    #chrome-digits {
+      position: relative;
+      display: inline-block;
+      width: 2.2ch;
+      height: 40px;
+      vertical-align: top;
+      color: var(--ink);
+    }
+    #chrome-digits span {
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    /* 72x8 bars centred at x = 1446 / 1528 / 1610 / 1692, y = 132 */
+    .seg {
+      position: absolute;
+      top: 128px;
+      width: 72px;
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .seg-track,
+    .seg-fill {
+      position: absolute;
+      inset: 0;
+      background: var(--seg);
+    }
+    .seg-track {
+      opacity: 0.45;
+    }
+    .seg-fill {
+      transform-origin: left center;
+    }
+    #chrome-g1 { left: 1410px; --seg: var(--c1); }
+    #chrome-g2 { left: 1492px; --seg: var(--c2); }
+    #chrome-g3 { left: 1574px; --seg: var(--c3); }
+    #chrome-g4 { left: 1656px; --seg: var(--c4); }
+  </style>
+  <div id="root" data-composition-id="chrome" data-width="1920" data-height="1080">
+    <div id="chrome-label">Claude 做视频的四条路</div>
+    <div id="chrome-count">
+      <span id="chrome-digits"
+        ><span id="chrome-d1">01</span><span id="chrome-d2">02</span><span id="chrome-d3">03</span
+        ><span id="chrome-d4">04</span></span
+      > / 04
+    </div>
+    <div id="chrome-g1" class="seg"><div class="seg-track"></div><div id="chrome-f1" class="seg-fill"></div></div>
+    <div id="chrome-g2" class="seg"><div class="seg-track"></div><div id="chrome-f2" class="seg-fill"></div></div>
+    <div id="chrome-g3" class="seg"><div class="seg-track"></div><div id="chrome-f3" class="seg-fill"></div></div>
+    <div id="chrome-g4" class="seg"><div class="seg-track"></div><div id="chrome-f4" class="seg-fill"></div></div>
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      // Each route scene starts every 2.5 s from this overlay's start.
+      const beat = 2.5;
+
+      tl.fromTo(
+        ["#chrome-label", "#chrome-count"],
+        { opacity: 0, filter: "blur(6px)" },
+        { opacity: 1, filter: "blur(0px)", duration: 0.25, ease: "power3.out" },
+        0,
+      );
+
+      const digits = ["#chrome-d1", "#chrome-d2", "#chrome-d3", "#chrome-d4"];
+      const fills = ["#chrome-f1", "#chrome-f2", "#chrome-f3", "#chrome-f4"];
+      tl.set(digits.slice(1), { opacity: 0 }, 0);
+
+      fills.forEach((sel, i) => {
+        tl.fromTo(sel, { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "expo.out" }, i * beat);
+      });
+
+      // Counter: blur swap on every beat after the first.
+      for (let i = 1; i < 4; i += 1) {
+        const at = i * beat;
+        tl.fromTo(
+          digits[i - 1],
+          { opacity: 1, filter: "blur(0px)" },
+          { opacity: 0, filter: "blur(4px)", duration: 0.12, ease: "power2.in", immediateRender: false },
+          at,
+        );
+        tl.fromTo(
+          digits[i],
+          { opacity: 0, filter: "blur(4px)" },
+          { opacity: 1, filter: "blur(0px)", duration: 0.14, ease: "power3.out", immediateRender: false },
+          at + 0.08,
+        );
+      }
+
+      // Label and counter leave before the outro; the bars stay and fly into it.
+      tl.fromTo(
+        ["#chrome-label", "#chrome-count"],
+        { opacity: 1, filter: "blur(0px)" },
+        { opacity: 0, filter: "blur(8px)", duration: 0.16, ease: "power2.in", immediateRender: false },
+        9.82,
+      );
+
+      window.__timelines["chrome"] = tl;
+    })();
+  </script>
+</template>

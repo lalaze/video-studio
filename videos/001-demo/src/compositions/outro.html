@@ -1,0 +1,94 @@
+<template>
+  <link rel="stylesheet" href="assets/theme.css" />
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    .sq-fly {
+      position: absolute;
+      top: 380px;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+    }
+    #outro-f1 { left: 874px; background: var(--c1); }
+    #outro-f2 { left: 922px; background: var(--c2); }
+    #outro-f3 { left: 970px; background: var(--c3); }
+    #outro-f4 { left: 1018px; background: var(--c4); }
+    #outro-mark {
+      position: absolute;
+      left: 192px;
+      right: 192px;
+      top: 452px;
+      text-align: center;
+      font: 700 156px/1.1 var(--font-mono);
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    #outro-mark span {
+      display: inline-block;
+    }
+    #outro-hy {
+      color: var(--c1);
+    }
+    #outro-sub {
+      position: absolute;
+      left: 192px;
+      right: 192px;
+      top: 660px;
+      text-align: center;
+      font: 400 40px/1.4 var(--font-sans);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+  </style>
+  <div id="root" data-composition-id="outro" data-width="1920" data-height="1080">
+    <div id="outro-f1" class="sq-fly"></div>
+    <div id="outro-f2" class="sq-fly"></div>
+    <div id="outro-f3" class="sq-fly"></div>
+    <div id="outro-f4" class="sq-fly"></div>
+    <h1 id="outro-mark"
+      ><span>v</span><span>i</span><span>d</span><span>e</span><span>o</span><span id="outro-hy">-</span
+      ><span>s</span><span>t</span><span>u</span><span>d</span><span>i</span><span>o</span></h1
+    >
+    <p id="outro-sub">用 Claude Code 做视频的工作台</p>
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+
+      // The four progress bars of the chrome overlay (72x8, centred at y=132)
+      // fly back to the middle and become the swatches from the title again.
+      const from = [1446, 1528, 1610, 1692];
+      const centres = [888, 936, 984, 1032];
+      ["#outro-f1", "#outro-f2", "#outro-f3", "#outro-f4"].forEach((sel, i) => {
+        tl.fromTo(
+          sel,
+          { x: from[i] - centres[i], y: 132 - 394, scaleX: 72 / 28, scaleY: 8 / 28 },
+          { x: 0, y: 0, scaleX: 1, scaleY: 1, duration: 0.5, ease: "power3.inOut" },
+          i * 0.03,
+        );
+      });
+
+      // Wordmark, letter by letter, sharpening in place.
+      tl.fromTo(
+        "#outro-mark span",
+        { opacity: 0, filter: "blur(6px)" },
+        { opacity: 1, filter: "blur(0px)", duration: 0.16, ease: "power2.out", stagger: 0.03 },
+        0.06,
+      );
+
+      tl.fromTo(
+        "#outro-sub",
+        { opacity: 0, filter: "blur(6px)" },
+        { opacity: 1, filter: "blur(0px)", duration: 0.3, ease: "power3.out" },
+        0.55,
+      );
+      // From ~0.85 s the frame is dead still until the end (~2.4 s hold).
+
+      window.__timelines["outro"] = tl;
+    })();
+  </script>
+</template>

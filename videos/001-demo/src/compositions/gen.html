@@ -1,0 +1,156 @@
+<template>
+  <link rel="stylesheet" href="assets/theme.css" />
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      --accent: var(--c3);
+    }
+    #gen-tools .step {
+      color: var(--dim);
+    }
+    #gen-tools .arrow {
+      color: var(--dim);
+    }
+    #gen-frame {
+      position: absolute;
+      left: 84px;
+      top: 82px;
+      width: 560px;
+      height: 315px;
+      overflow: visible;
+    }
+    .gen-stroke {
+      fill: none;
+      stroke: #f3efe6;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 1000;
+    }
+  </style>
+  <div id="root" data-composition-id="gen" data-width="1920" data-height="1080">
+    <div id="gen-col" class="col">
+      <div id="gen-num" class="num">03</div>
+      <h2 id="gen-name" class="name">AI 生成画面</h2>
+      <div id="gen-tools" class="tools">
+        <span id="gen-t1" class="step">分镜</span><span class="arrow"> → </span
+        ><span id="gen-t2" class="step">关键帧</span><span class="arrow"> → </span
+        ><span id="gen-t3" class="step">图生视频</span>
+      </div>
+      <p id="gen-desc" class="desc">先出关键帧，再让模型动起来</p>
+    </div>
+    <div id="gen-g" class="graphic">
+      <div id="gen-gi" style="position: absolute; inset: 0">
+        <svg id="gen-frame" viewBox="0 0 560 315" width="560" height="315">
+          <defs>
+            <clipPath id="gen-clip"><rect x="0" y="0" width="560" height="315" rx="14" /></clipPath>
+            <linearGradient id="gen-sky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#4a3b78" />
+              <stop offset="1" stop-color="#241d3d" />
+            </linearGradient>
+          </defs>
+          <!-- step 2: the keyframe, painted -->
+          <g id="gen-fill" clip-path="url(#gen-clip)">
+            <rect x="0" y="0" width="560" height="315" fill="url(#gen-sky)" />
+            <circle id="gen-sun" cx="410" cy="120" r="36" fill="#f2c36b" />
+            <polygon
+              id="gen-back"
+              points="-20,315 -20,230 120,150 210,215 330,105 470,220 580,170 580,315"
+              fill="#8a74c4"
+            />
+            <polygon
+              id="gen-front"
+              points="-30,315 -30,270 140,215 260,265 400,200 590,260 590,315"
+              fill="#4b3d73"
+            />
+            <rect id="gen-bar" x="0" y="305" width="560" height="10" fill="#a98bd8" />
+          </g>
+          <!-- step 1: the storyboard sketch -->
+          <g id="gen-sketch">
+            <rect class="gen-stroke" id="gen-k1" x="1.5" y="1.5" width="557" height="312" rx="14" pathLength="1000" />
+            <polyline
+              class="gen-stroke"
+              id="gen-k2"
+              points="0,230 120,150 210,215 330,105 470,220 560,170"
+              pathLength="1000"
+            />
+            <circle class="gen-stroke" id="gen-k3" cx="410" cy="120" r="36" pathLength="1000" />
+          </g>
+          <!-- step 3: it plays -->
+          <g id="gen-play">
+            <circle cx="280" cy="157" r="38" fill="rgba(20,20,19,0.6)" stroke="#f3efe6" stroke-width="3" />
+            <polygon points="270,139 270,175 299,157" fill="#f3efe6" />
+          </g>
+        </svg>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      const blurIn = (sel, at, d = 0.22) =>
+        tl.fromTo(
+          sel,
+          { opacity: 0, filter: "blur(8px)" },
+          { opacity: 1, filter: "blur(0px)", duration: d, ease: "power3.out" },
+          at,
+        );
+
+      blurIn("#gen-num", 0.02, 0.18);
+      blurIn("#gen-name", 0.05);
+      blurIn("#gen-tools", 0.12, 0.2);
+      blurIn("#gen-desc", 0.14);
+
+      tl.fromTo(
+        "#gen-gi",
+        { x: 90, opacity: 0, filter: "blur(12px)" },
+        { x: 0, opacity: 1, filter: "blur(0px)", duration: 0.45, ease: "expo.out" },
+        0.08,
+      );
+
+      // The steps in the tools line light up as the picture reaches each one.
+      const light = (sel, at) =>
+        tl.fromTo(sel, { color: "#7a756c" }, { color: "#a98bd8", duration: 0.18, ease: "power1.out" }, at);
+
+      // 1. storyboard: the frame, the ridge and the sun are drawn as line art.
+      light("#gen-t1", 0.12);
+      ["#gen-k1", "#gen-k2", "#gen-k3"].forEach((sel, i) => {
+        tl.fromTo(sel, { strokeDashoffset: 1000 }, { strokeDashoffset: 0, duration: 0.45, ease: "power2.inOut" }, 0.1 + i * 0.08);
+      });
+
+      // 2. keyframe: colour fills in under the sketch, which fades away.
+      light("#gen-t2", 0.92);
+      tl.fromTo("#gen-fill", { opacity: 0 }, { opacity: 1, duration: 0.35, ease: "power2.out" }, 0.92);
+      tl.fromTo("#gen-sketch", { opacity: 1 }, { opacity: 0, duration: 0.3, ease: "power1.in" }, 1.02);
+
+      // 3. image to video: a play badge, then the still starts to move.
+      light("#gen-t3", 1.36);
+      tl.fromTo(
+        "#gen-play",
+        { opacity: 0, scale: 0.6, svgOrigin: "280 157" },
+        { opacity: 1, scale: 1, svgOrigin: "280 157", duration: 0.25, ease: "expo.out" },
+        1.34,
+      );
+      tl.fromTo(
+        "#gen-play",
+        { opacity: 1 },
+        { opacity: 0, duration: 0.2, ease: "power1.in", immediateRender: false },
+        1.72,
+      );
+      tl.fromTo("#gen-sun", { y: 0 }, { y: -52, duration: 0.95, ease: "none" }, 1.38);
+      tl.fromTo("#gen-back", { x: 0 }, { x: -10, duration: 0.95, ease: "none" }, 1.38);
+      tl.fromTo("#gen-front", { x: 0 }, { x: -24, duration: 0.95, ease: "none" }, 1.38);
+      tl.fromTo("#gen-bar", { scaleX: 0, svgOrigin: "0 310" }, { scaleX: 1, svgOrigin: "0 310", duration: 0.95, ease: "none" }, 1.38);
+
+      tl.fromTo(
+        ["#gen-col", "#gen-g"],
+        { opacity: 1, filter: "blur(0px)" },
+        { opacity: 0, filter: "blur(8px)", duration: 0.15, ease: "power2.in", immediateRender: false },
+        2.33,
+      );
+
+      window.__timelines["gen"] = tl;
+    })();
+  </script>
+</template>

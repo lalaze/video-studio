@@ -1,0 +1,113 @@
+<template>
+  <link rel="stylesheet" href="assets/theme.css" />
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      font-family: var(--font-sans);
+    }
+    #intro-text {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      bottom: 0;
+    }
+    #intro-title {
+      position: absolute;
+      left: 192px;
+      right: 192px;
+      top: 456px;
+      text-align: center;
+      font: 700 128px/1.15 var(--font-sans);
+      letter-spacing: -0.01em;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    /* four route swatches; .sq-fly carries the flight, .sq carries the pop */
+    .sq-fly {
+      position: absolute;
+      top: 400px;
+      width: 28px;
+      height: 28px;
+    }
+    .sq {
+      width: 100%;
+      height: 100%;
+      border-radius: 6px;
+    }
+    #intro-f1 { left: 874px; }
+    #intro-f2 { left: 922px; }
+    #intro-f3 { left: 970px; }
+    #intro-f4 { left: 1018px; }
+    #intro-s1 { background: var(--c1); }
+    #intro-s2 { background: var(--c2); }
+    #intro-s3 { background: var(--c3); }
+    #intro-s4 { background: var(--c4); }
+  </style>
+  <div id="root" data-composition-id="intro" data-width="1920" data-height="1080">
+    <div id="intro-text">
+      <h1 id="intro-title">
+        <span id="intro-w1">Claude</span> <span id="intro-w2">做视频的</span><span id="intro-w3"
+          >四条路</span
+        >
+      </h1>
+    </div>
+    <div id="intro-f1" class="sq-fly"><div id="intro-s1" class="sq"></div></div>
+    <div id="intro-f2" class="sq-fly"><div id="intro-s2" class="sq"></div></div>
+    <div id="intro-f3" class="sq-fly"><div id="intro-s3" class="sq"></div></div>
+    <div id="intro-f4" class="sq-fly"><div id="intro-s4" class="sq"></div></div>
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+
+      // Frame 0 already shows the title (in grey) so the thumbnail is never empty;
+      // the words ink in one after another, no position change.
+      tl.fromTo("#intro-w1", { color: "#5c5850" }, { color: "#f3efe6", duration: 0.28, ease: "power2.out" }, 0);
+      tl.fromTo("#intro-w2", { color: "#5c5850" }, { color: "#f3efe6", duration: 0.28, ease: "power2.out" }, 0.08);
+      tl.fromTo("#intro-w3", { color: "#5c5850" }, { color: "#d97757", duration: 0.28, ease: "power2.out" }, 0.16);
+
+      ["#intro-s1", "#intro-s2", "#intro-s3", "#intro-s4"].forEach((sel, i) => {
+        tl.fromTo(
+          sel,
+          { scale: 0, opacity: 0 },
+          { scale: 1, opacity: 1, duration: 0.35, ease: "expo.out" },
+          0.3 + i * 0.06,
+        );
+      });
+
+      // Carry across: the swatches (above the title, so their path never crosses it)
+      // fly to the top-right and flatten into the chrome overlay's progress bar
+      // (72x8 bars centred at y=132).
+      const targets = [1446, 1528, 1610, 1692];
+      const centres = [888, 936, 984, 1032];
+      ["#intro-f1", "#intro-f2", "#intro-f3", "#intro-f4"].forEach((sel, i) => {
+        tl.fromTo(
+          sel,
+          { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 },
+          {
+            x: targets[i] - centres[i],
+            y: 132 - 414,
+            scaleX: 72 / 28,
+            scaleY: 8 / 28,
+            opacity: 0.45,
+            duration: 0.3,
+            ease: "power3.inOut",
+          },
+          1.36 + i * 0.01,
+        );
+      });
+
+      // Title leaves with a short blur-out.
+      tl.fromTo(
+        "#intro-text",
+        { opacity: 1, filter: "blur(0px)" },
+        { opacity: 0, filter: "blur(8px)", duration: 0.15, ease: "power2.in" },
+        1.53,
+      );
+
+      window.__timelines["intro"] = tl;
+    })();
+  </script>
+</template>

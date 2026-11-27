@@ -1,0 +1,192 @@
+<template>
+  <link rel="stylesheet" href="assets/theme.css" />
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      --accent: var(--c2);
+    }
+    /* one segment = a transcript word + the stretch of waveform it covers */
+    .cut-seg {
+      position: absolute;
+      top: 90px;
+      height: 300px;
+    }
+    .cut-chip {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 66px;
+      border-radius: 12px;
+      background: var(--panel);
+      border: 2px solid var(--line);
+      font: 400 32px/62px var(--font-sans);
+      color: var(--ink);
+      text-align: center;
+      white-space: nowrap;
+    }
+    .cut-strike {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      top: 29px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--cut);
+      transform-origin: left center;
+    }
+    .cut-bars {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 110px;
+      height: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+    .cut-bars i {
+      display: block;
+      width: 6px;
+      border-radius: 3px;
+      background: var(--c2);
+    }
+    /* original layout: 142 / 74 / 142 / 74 / 176 px with 16 px gaps, 28..700 */
+    #cut-s0 { left: 28px; width: 142px; }
+    #cut-s1 { left: 186px; width: 74px; }
+    #cut-s2 { left: 276px; width: 142px; }
+    #cut-s3 { left: 434px; width: 74px; }
+    #cut-s4 { left: 524px; width: 176px; }
+    #cut-head {
+      position: absolute;
+      left: 116px;
+      top: 76px;
+      width: 4px;
+      height: 328px;
+      border-radius: 2px;
+      background: var(--ink);
+    }
+  </style>
+  <div id="root" data-composition-id="cut" data-width="1920" data-height="1080">
+    <div id="cut-col" class="col">
+      <div id="cut-num" class="num">02</div>
+      <h2 id="cut-name" class="name">剪已有素材</h2>
+      <div id="cut-tools" class="tools">转写 + ffmpeg</div>
+      <p id="cut-desc" class="desc">按文字稿定剪点，ffmpeg 执行</p>
+    </div>
+    <div id="cut-g" class="graphic">
+      <div id="cut-gi" style="position: absolute; inset: 0">
+        <div id="cut-s0" class="cut-seg">
+          <div id="cut-c0" class="cut-chip">大家好</div>
+          <div class="cut-bars"><i style="height:24px"></i><i style="height:89px"></i><i style="height:106px"></i><i style="height:69px"></i><i style="height:42px"></i><i style="height:40px"></i><i style="height:38px"></i><i style="height:69px"></i><i style="height:60px"></i><i style="height:46px"></i><i style="height:105px"></i><i style="height:119px"></i><i style="height:75px"></i><i style="height:38px"></i></div>
+        </div>
+        <div id="cut-s1" class="cut-seg">
+          <div id="cut-c1" class="cut-chip">嗯<div id="cut-x1" class="cut-strike"></div></div>
+          <div id="cut-b1" class="cut-bars"><i style="height:40px"></i><i style="height:33px"></i><i style="height:26px"></i><i style="height:26px"></i><i style="height:30px"></i><i style="height:48px"></i><i style="height:52px"></i></div>
+        </div>
+        <div id="cut-s2" class="cut-seg">
+          <div id="cut-c2" class="cut-chip">今天聊</div>
+          <div class="cut-bars"><i style="height:57px"></i><i style="height:63px"></i><i style="height:105px"></i><i style="height:91px"></i><i style="height:61px"></i><i style="height:39px"></i><i style="height:27px"></i><i style="height:56px"></i><i style="height:68px"></i><i style="height:32px"></i><i style="height:80px"></i><i style="height:119px"></i><i style="height:100px"></i><i style="height:57px"></i></div>
+        </div>
+        <div id="cut-s3" class="cut-seg">
+          <div id="cut-c3" class="cut-chip">呃<div id="cut-x3" class="cut-strike"></div></div>
+          <div id="cut-b3" class="cut-bars"><i style="height:35px"></i><i style="height:38px"></i><i style="height:33px"></i><i style="height:25px"></i><i style="height:24px"></i><i style="height:40px"></i><i style="height:52px"></i></div>
+        </div>
+        <div id="cut-s4" class="cut-seg">
+          <div id="cut-c4" class="cut-chip">怎么剪片</div>
+          <div class="cut-bars"><i style="height:81px"></i><i style="height:35px"></i><i style="height:90px"></i><i style="height:102px"></i><i style="height:84px"></i><i style="height:46px"></i><i style="height:36px"></i><i style="height:38px"></i><i style="height:64px"></i><i style="height:51px"></i><i style="height:50px"></i><i style="height:104px"></i><i style="height:113px"></i><i style="height:85px"></i><i style="height:39px"></i><i style="height:68px"></i><i style="height:70px"></i><i style="height:47px"></i></div>
+        </div>
+        <div id="cut-head"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      const blurIn = (sel, at, d = 0.22) =>
+        tl.fromTo(
+          sel,
+          { opacity: 0, filter: "blur(8px)" },
+          { opacity: 1, filter: "blur(0px)", duration: d, ease: "power3.out" },
+          at,
+        );
+
+      blurIn("#cut-num", 0.02, 0.18);
+      blurIn("#cut-name", 0.05);
+      blurIn("#cut-tools", 0.12, 0.2);
+      blurIn("#cut-desc", 0.14);
+
+      tl.fromTo(
+        "#cut-gi",
+        { x: 90, opacity: 0, filter: "blur(12px)" },
+        { x: 0, opacity: 1, filter: "blur(0px)", duration: 0.45, ease: "expo.out" },
+        0.08,
+      );
+
+      // Transcript words land, then the waveform grows under them, left to right.
+      ["#cut-c0", "#cut-c1", "#cut-c2", "#cut-c3", "#cut-c4"].forEach((sel, i) => {
+        tl.fromTo(
+          sel,
+          { opacity: 0, filter: "blur(6px)" },
+          { opacity: 1, filter: "blur(0px)", duration: 0.16, ease: "power3.out" },
+          0.14 + i * 0.06,
+        );
+      });
+      tl.fromTo(
+        "#cut-gi .cut-bars i",
+        { scaleY: 0 },
+        { scaleY: 1, duration: 0.28, ease: "power3.out", stagger: 0.006 },
+        0.22,
+      );
+
+      // The filler words are struck out and turn red, with their audio.
+      [
+        ["#cut-x1", "#cut-c1", "#cut-b1 i"],
+        ["#cut-x3", "#cut-c3", "#cut-b3 i"],
+      ].forEach(([strike, chip, bars], i) => {
+        const at = 0.82 + i * 0.1;
+        tl.fromTo(strike, { scaleX: 0 }, { scaleX: 1, duration: 0.16, ease: "power2.out" }, at);
+        tl.fromTo(
+          chip,
+          { color: "#f3efe6", borderColor: "#34322e" },
+          { color: "#e0645a", borderColor: "#e0645a", duration: 0.16, ease: "power1.out" },
+          at,
+        );
+        tl.fromTo(
+          bars,
+          { backgroundColor: "#6a9bcc" },
+          { backgroundColor: "#e0645a", duration: 0.16, ease: "power1.out" },
+          at,
+        );
+      });
+
+      // Cut: the fillers collapse and the rest closes up, centred (118..610).
+      const cutAt = 1.15;
+      ["#cut-s1", "#cut-s3"].forEach((sel) => {
+        tl.fromTo(
+          sel,
+          { scaleX: 1, opacity: 1 },
+          { scaleX: 0, opacity: 0, duration: 0.36, ease: "power3.inOut" },
+          cutAt,
+        );
+      });
+      tl.fromTo("#cut-s0", { x: 0 }, { x: 90, duration: 0.4, ease: "power3.inOut" }, cutAt);
+      tl.fromTo("#cut-s4", { x: 0 }, { x: -90, duration: 0.4, ease: "power3.inOut" }, cutAt);
+
+      // Playback of the cut: the playhead runs across the joined clip.
+      tl.fromTo("#cut-head", { opacity: 0 }, { opacity: 1, duration: 0.1 }, 1.55);
+      tl.fromTo("#cut-head", { x: 0 }, { x: 494, duration: 0.75, ease: "none" }, 1.58);
+
+      tl.fromTo(
+        ["#cut-col", "#cut-g"],
+        { opacity: 1, filter: "blur(0px)" },
+        { opacity: 0, filter: "blur(8px)", duration: 0.15, ease: "power2.in", immediateRender: false },
+        2.33,
+      );
+
+      window.__timelines["cut"] = tl;
+    })();
+  </script>
+</template>
